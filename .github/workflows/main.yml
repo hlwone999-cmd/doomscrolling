@@ -115,8 +115,9 @@ jobs:
               rows.append("%s: %d tests, %d failed, %d errors, %d skipped" % (r.get("name").split(".")[-1], t, fa, er, sk))
               tot = [a + b for a, b in zip(tot, (t, fa, er, sk))]
           head = "JVM unit tests: %d run, %d failed, %d errors, %d skipped" % tuple(tot)
-          print(head); print("
-".join(rows))
+          print(head)
+          for row in rows:
+              print(row)
           print("::notice title=" + head + "::" + "%0A".join(rows))
           EOF
 
