@@ -161,5 +161,11 @@ rebase), new `ScrollSource.kt` (scroll source relation, `FeedContext`),
 `SurfaceDetector` (relation, node description, bottom-nav item count),
 `ReelService` (wiring, immediate probe on confirming evidence, feed checks,
 structured scroll log), Diagnostics rows, rules v3 (`countOnlyMainFeed` for
-TikTok). CI results are added below once the run finishes.
+TikTok).
+
+| run | commit | result |
+| --- | --- | --- |
+| 44997423921 | e31720e | **success: 95 JVM tests, 0 failed** (CoreTest 5, CountingEngineTest 21, FeedPipelineTest 25, LogicTest 12, PageTrackerTest 15, PositionTrackerTest 8, RoomDatabaseTest 9); Python suites pass (engine_sim 63 checks); debug APK 11.5 MB, no INTERNET |
+
+Device verification of BUG-006 on the Realme is still pending.
 
