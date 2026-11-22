@@ -204,7 +204,7 @@ fun CounterSettingsScreen(onBack: () -> Unit) {
                 SwitchRow(stringResource(R.string.counter_timer), s.showTimer, { save(s.copy(showTimer = it)) }, subtitle = stringResource(R.string.counter_timer_sub))
             }
         }
-        AppButton(stringResource(R.string.counter_reset_position), { scope.launch { graph.prefs.setOverlayPosition(1f, 0.18f) } },
+        AppButton(stringResource(R.string.counter_reset_position), { scope.launch { graph.prefs.clearOverlayPosition() } },
             variant = ButtonVariant.SECONDARY, modifier = Modifier.fillMaxWidth())
     }
 }
@@ -532,6 +532,11 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                 DiagLine(stringResource(R.string.diag_surface), live.surface ?: none, warn = live.surface?.startsWith("none") == true)
                 DiagLine(stringResource(R.string.diag_last_reason),
                     live.lastReason?.let { "$it · ${clock(live.lastReasonAt)}" } ?: none)
+                DiagLine(stringResource(R.string.diag_scroll_events), live.scrollEvents.toString())
+                DiagLine(stringResource(R.string.diag_page_changes), live.pageChanges.toString())
+                DiagLine(stringResource(R.string.diag_positions),
+                    "${live.previousPosition?.toString() ?: "–"} → ${live.position}")
+                DiagLine(stringResource(R.string.diag_page_decision), live.pageDecision ?: none)
                 DiagLine(stringResource(R.string.diag_counted_since), live.countedSinceConnect.toString())
                 DiagLine(stringResource(R.string.diag_total_real), realTotal.toString())
                 Text(stringResource(R.string.diag_live_note), style = AppType.bodySm, color = c.textMuted)

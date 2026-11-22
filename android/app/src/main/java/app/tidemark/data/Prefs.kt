@@ -103,6 +103,9 @@ class Prefs(context: Context) {
         it[OVERLAY_X] = x.coerceIn(0f, 1f); it[OVERLAY_Y] = y.coerceIn(0f, 1f)
     }
 
+    /** Back to the default: top centre, below the status bar and the app's header. */
+    suspend fun clearOverlayPosition() = store.edit { it.remove(OVERLAY_X); it.remove(OVERLAY_Y) }
+
     // ---- day and counting ----
 
     val resetHour: Flow<Int> = data.map { (it[RESET_HOUR] ?: DayKeys.DEFAULT_RESET_HOUR).coerceIn(0, 6) }.distinctUntilChanged()

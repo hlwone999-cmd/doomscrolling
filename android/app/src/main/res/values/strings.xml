@@ -109,7 +109,7 @@
     <string name="counter_auto">Only on the short-video screen</string>
     <string name="counter_off">Never (keep counting)</string>
     <string name="counter_opacity">Opacity</string>
-    <string name="counter_reset_position">Put the counter back in the corner</string>
+    <string name="counter_reset_position">Put the counter back at the top centre</string>
     <string name="counter_show">Show the counter</string>
     <string name="counter_size">Size</string>
     <string name="counter_timer">Show session time</string>
@@ -309,4 +309,8 @@
     <string name="diag_total_real">Total videos counted (database)</string>
     <string name="diag_none">none yet</string>
     <string name="diag_live_note">Open Reels, Shorts or TikTok, scroll a few videos, then come back here. Only technical details are shown: app names, event types and screen structure, never what is on screen.</string>
+    <string name="diag_scroll_events">Pager scroll events received</string>
+    <string name="diag_page_changes">Page changes detected</string>
+    <string name="diag_positions">Video position: previous → current</string>
+    <string name="diag_page_decision">Last page decision</string>
 </resources>

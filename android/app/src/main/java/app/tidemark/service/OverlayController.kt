@@ -5,12 +5,14 @@ import android.content.Context
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.provider.Settings
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
+import android.view.WindowInsets
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
@@ -115,6 +117,7 @@ class OverlayController(
 
     private var attached = false
     private var visible = false
+    private var dragging = false
     private var scale = 1f
     private var showTimer = false
     private var lastPos: Pair<Float, Float>? = null
@@ -122,6 +125,10 @@ class OverlayController(
     init {
         applyAppearance(1, 88, false)
         attachDragHandler()
+        // Keep the pill centred when its width changes (more digits, timer on/off).
+        pill.addOnLayoutChangeListener { _, left, _, right, _, oldLeft, _, oldRight, _ ->
+            if (right - left != oldRight - oldLeft && !dragging) setPosition(lastPos)
+        }
     }
 
     /** S14 counter settings: size 0/1/2, opacity 60-100 %, timer on/off. */
@@ -143,13 +150,45 @@ class OverlayController(
         setPosition(lastPos)
     }
 
-    /** Normalised position (0..1); null = default top-right. */
+    /**
+     * Normalised position (x 0..1 across the free width, y 0..1 of the height);
+     * null = the default: horizontally centred, below the status bar / notch and
+     * the app's own header row. Recomputed on every call, so rotation and
+     * different screen sizes stay right.
+     */
     fun setPosition(pos: Pair<Float, Float>?) {
         lastPos = pos
-        val (nx, ny) = pos ?: (1f to 0.18f)
-        params.x = (nx * (dm.widthPixels - pillWidth())).roundToInt().coerceAtLeast(0)
-        params.y = (ny * dm.heightPixels).roundToInt().coerceIn(kit.dpi(24f), dm.heightPixels - kit.dpi(96f))
+        val w = screenWidth()
+        val h = screenHeight()
+        val top = safeTop()
+        val minY = top + kit.dpi(8f)
+        val maxY = (h - kit.dpi(96f)).coerceAtLeast(minY)
+        val nx = pos?.first ?: 0.5f
+        params.x = (nx * (w - pillWidth())).roundToInt().coerceIn(0, (w - pillWidth()).coerceAtLeast(0))
+        params.y = if (pos == null) (top + kit.dpi(DEFAULT_TOP_OFFSET_DP)).coerceIn(minY, maxY)
+        else (pos.second * h).roundToInt().coerceIn(minY, maxY)
         if (attached) wm.updateViewLayout(pill, params)
+    }
+
+    /** Re-apply the saved (or default) position after a rotation or resize. */
+    fun relayout() = setPosition(lastPos)
+
+    /** Screen y just below the pill, for the counter card. */
+    fun anchorBottom(): Int = params.y + (if (pill.height > 0) pill.height else kit.dpi(36f * scale))
+
+    private fun screenWidth(): Int = context.resources.displayMetrics.widthPixels
+    private fun screenHeight(): Int = context.resources.displayMetrics.heightPixels
+
+    /** Status bar and display cutout (notch) height at the top. */
+    private fun safeTop(): Int {
+        if (Build.VERSION.SDK_INT >= 30) {
+            val insets = wm.currentWindowMetrics.windowInsets.getInsetsIgnoringVisibility(
+                WindowInsets.Type.statusBars() or WindowInsets.Type.displayCutout()
+            )
+            return insets.top
+        }
+        val id = context.resources.getIdentifier("status_bar_height", "dimen", "android")
+        return if (id > 0) context.resources.getDimensionPixelSize(id) else kit.dpi(24f)
     }
 
     /** Count shown is today's total; the dot follows the all-apps video goal if there is one. */
@@ -185,6 +224,7 @@ class OverlayController(
             try {
                 wm.addView(pill, params)
                 attached = true
+                pill.post { setPosition(lastPos) } // centre again once the real width is known
             } catch (e: Exception) {
                 visible = false
                 return
@@ -221,7 +261,7 @@ class OverlayController(
         val slop = ViewConfiguration.get(context).scaledTouchSlop
         val longPress = ViewConfiguration.getLongPressTimeout().toLong()
         var downX = 0f; var downY = 0f; var startX = 0; var startY = 0
-        var downAt = 0L; var dragging = false; var moved = false
+        var downAt = 0L; var moved = false
         pill.setOnTouchListener { _, e ->
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
@@ -245,12 +285,18 @@ class OverlayController(
                 }
                 MotionEvent.ACTION_UP -> {
                     if (dragging) {
-                        val snapRight = params.x + pillWidth() / 2 > dm.widthPixels / 2
-                        params.x = if (snapRight) dm.widthPixels - pillWidth() - kit.dpi(8f) else kit.dpi(8f)
-                        if (attached) wm.updateViewLayout(pill, params)
-                        val ny = params.y.toFloat() / dm.heightPixels
-                        lastPos = (if (snapRight) 1f else 0f) to ny
-                        onMoved(if (snapRight) 1f else 0f, ny)
+                        // Snap to the nearest of left, centre and right.
+                        val w = screenWidth()
+                        val centre = params.x + pillWidth() / 2f
+                        val nx = when {
+                            centre < w / 3f -> 0f
+                            centre > w * 2f / 3f -> 1f
+                            else -> 0.5f
+                        }
+                        val ny = params.y.toFloat() / screenHeight()
+                        dragging = false
+                        setPosition(nx to ny)
+                        onMoved(nx, ny)
                     } else if (!moved && e.eventTime - downAt < longPress) {
                         pill.performClick()
                         onTap()
@@ -265,6 +311,11 @@ class OverlayController(
     }
 
     private fun pillWidth(): Int = if (pill.width > 0) pill.width else kit.dpi(72f * scale)
+
+    private companion object {
+        /** Below the status bar: clears the header row of TikTok, Reels and Shorts. */
+        const val DEFAULT_TOP_OFFSET_DP = 64f
+    }
 }
 
 /** S07: small card under the pill. Never focusable; closes on its own after 6 s. */
@@ -316,7 +367,7 @@ class CounterCard(
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            y = anchorY + kit.dpi(48f)
+            y = anchorY + kit.dpi(8f)
         }
         view.setOnTouchListener { v, e ->
             if (e.actionMasked == MotionEvent.ACTION_OUTSIDE) { dismiss(); true } else { v.performClick(); false }

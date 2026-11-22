@@ -4,7 +4,6 @@ import android.graphics.Rect
 import android.os.Build
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction
-import app.tidemark.core.ItemKeys
 
 /**
  * Finds the short-video pager on screen and the video currently filling it.
@@ -38,8 +37,13 @@ class SurfaceDetector {
                 if (byHint) " (id hint)" else " (structure)"
     }
 
-    /** The item on screen: its key and the container identity used by PositionTracker. */
-    class CurrentItem(val node: AccessibilityNodeInfo, val order: List<AccessibilityNodeInfo>, val row: Int?)
+    /** What a probe sees in the pager. Structure only. */
+    sealed interface Snapshot {
+        /** One page fills the pager: identities of its full-screen containers, and its adapter row if exposed. */
+        class Settled(val signature: List<AccessibilityNodeInfo>, val row: Int?) : Snapshot
+        /** Two pages share the screen: a swipe is in progress. */
+        class MidSwipe(val upper: AccessibilityNodeInfo, val lower: AccessibilityNodeInfo) : Snapshot
+    }
 
     fun find(root: AccessibilityNodeInfo, rule: AppRule): Match? {
         val window = Rect().also { root.getBoundsInScreen(it) }
@@ -66,32 +70,45 @@ class SurfaceDetector {
         return b.height() >= match.bounds.height() * 0.8f && b.width() >= match.bounds.width() * 0.9f
     }
 
-    /** The child filling the pager, with the children order for PositionTracker. Null mid-swipe. */
-    fun currentItem(match: Match): CurrentItem? {
+    /**
+     * The page state, or null when nothing readable is on screen (loading).
+     * Signature: the visible child that fills most of the pager, plus that
+     * child's own full-screen child if it has one (so a constant wrapper still
+     * changes underneath). Small views (like buttons, captions) never enter
+     * the signature, so likes and comments can't change it.
+     */
+    fun snapshot(match: Match): Snapshot? {
         if (!match.pager.refresh()) return null
         val list = listNode(match.pager)
-        val listBounds = Rect().also { list.getBoundsInScreen(it) }
-        val children = (0 until list.childCount).mapNotNull { list.getChild(it) }
-        var best: AccessibilityNodeInfo? = null
-        var bestVisible = 0
+        val lb = Rect().also { list.getBoundsInScreen(it) }
+        if (lb.height() <= 0) return null
+        val visible = mutableListOf<Triple<AccessibilityNodeInfo, Int, Int>>() // node, visible height, top
         val r = Rect()
-        for (child in children) {
+        for (i in 0 until list.childCount) {
+            val child = list.getChild(i) ?: continue
             child.getBoundsInScreen(r)
-            if (!r.intersect(listBounds)) continue
-            if (r.height() > bestVisible) { bestVisible = r.height(); best = child }
+            if (!r.intersect(lb) || r.height() <= 0) continue
+            visible += Triple(child, r.height(), r.top)
         }
-        // Mid-swipe two pages share the screen; wait until one fills >= 85 %.
-        if (best == null || bestVisible < listBounds.height() * 0.85f) return null
-        val row = best.collectionItemInfo?.rowIndex?.takeIf { it >= 0 }
-        return CurrentItem(best, children, row)
-    }
-
-    /** Key for the engine: adapter row when the app exposes it, else the tracked position. */
-    fun keyFor(item: CurrentItem, tracker: PositionTracker<AccessibilityNodeInfo>): Pair<String, Boolean> {
-        val row = item.row
-        if (row != null) return ItemKeys.index(row) to false
-        val (pos, moved) = tracker.update(item.node, item.order)
-        return "p:$pos" to moved
+        if (visible.isEmpty()) return null
+        val best = visible.maxByOrNull { it.second }!!
+        if (best.second < lb.height() * 0.85f) {
+            val two = visible.filter { it.second >= lb.height() * 0.10f }.sortedBy { it.third }
+            return if (two.size >= 2) Snapshot.MidSwipe(two.first().first, two.last().first) else null
+        }
+        val page = best.first
+        val signature = mutableListOf(page)
+        val pb = Rect().also { page.getBoundsInScreen(it) }
+        var inner: AccessibilityNodeInfo? = null
+        var innerH = 0
+        for (i in 0 until page.childCount) {
+            val c = page.getChild(i) ?: continue
+            c.getBoundsInScreen(r)
+            if (r.height() > innerH) { innerH = r.height(); inner = c }
+        }
+        if (inner != null && pb.height() > 0 && innerH >= pb.height() * 0.85f) signature += inner
+        val row = page.collectionItemInfo?.rowIndex?.takeIf { it >= 0 }
+        return Snapshot.Settled(signature, row)
     }
 
     /**

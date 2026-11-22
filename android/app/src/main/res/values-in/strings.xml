@@ -100,7 +100,7 @@
     <string name="counter_auto">Hanya di layar video pendek</string>
     <string name="counter_off">Tidak pernah (tetap menghitung)</string>
     <string name="counter_opacity">Keburaman</string>
-    <string name="counter_reset_position">Kembalikan penghitung ke sudut</string>
+    <string name="counter_reset_position">Kembalikan penghitung ke tengah atas</string>
     <string name="counter_show">Tampilkan penghitung</string>
     <string name="counter_size">Ukuran</string>
     <string name="counter_timer">Tampilkan waktu sesi</string>
@@ -300,4 +300,8 @@
     <string name="diag_total_real">Total video terhitung (database)</string>
     <string name="diag_none">belum ada</string>
     <string name="diag_live_note">Buka Reels, Shorts, atau TikTok, scroll beberapa video, lalu kembali ke sini. Yang ditampilkan hanya detail teknis: nama aplikasi, jenis peristiwa, dan struktur layar, bukan isi layar.</string>
+    <string name="diag_scroll_events">Peristiwa scroll pager diterima</string>
+    <string name="diag_page_changes">Perpindahan halaman terdeteksi</string>
+    <string name="diag_positions">Posisi video: sebelumnya → sekarang</string>
+    <string name="diag_page_decision">Keputusan halaman terakhir</string>
 </resources>

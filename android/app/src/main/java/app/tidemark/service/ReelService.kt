@@ -30,7 +30,7 @@ import app.tidemark.detect.CountingEngine
 import app.tidemark.detect.EndReason
 import app.tidemark.detect.EngineConfig
 import app.tidemark.detect.EngineSink
-import app.tidemark.detect.PositionTracker
+import app.tidemark.detect.FeedPipeline
 import app.tidemark.detect.SurfaceDetector
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -64,8 +64,8 @@ class ReelService : AccessibilityService(), EngineSink {
     private lateinit var block: BlockScreen
 
     // Settings mirrored from DataStore / Room.
-    private val tracker = PositionTracker<AccessibilityNodeInfo>()
-    private var lastKey: String? = null
+    private lateinit var pipeline: FeedPipeline<AccessibilityNodeInfo>
+    private var lastProbeRequest = 0L
     private val lastCandidateLog = HashMap<String, Long>()
     private var consent = false
     private var pausedUntil = 0L
@@ -134,6 +134,7 @@ class ReelService : AccessibilityService(), EngineSink {
         }
         Notifications.cancelStopped(this)
         engine = CountingEngine(EngineConfig(settleMs = a.rules.settleMs), sink = this, dayKeyOf = { a.dayKey(it) })
+        pipeline = FeedPipeline(engine)
         overlay = OverlayController(
             this,
             onMoved = { x, y -> scope.launch { a.prefs.setOverlayPosition(x, y) } },
@@ -214,16 +215,18 @@ class ReelService : AccessibilityService(), EngineSink {
             }
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
                 if (rule == null) return
-                // Playing videos change content constantly, so this is throttled.
-                if (now - lastContentCheck < CONTENT_THROTTLE_MS) return
-                lastContentCheck = now
                 foregroundTracked = pkg
                 val m = match
-                if (m != null && matchPkg == pkg && stillVisible(m)) {
-                    // Cheap path: still on the video screen. Re-probe in case the
-                    // first probe ran before the video's views had loaded.
-                    scheduleProbe(PROBE_AFTER_SCROLL_MS)
+                if (m != null && matchPkg == pkg) {
+                    // On the video screen: a cheap probe of the pager's children,
+                    // often enough to see a swipe in progress.
+                    if (now - lastProbeRequest < PROBE_THROTTLE_MS) return
+                    lastProbeRequest = now
+                    if (stillVisible(m)) scheduleProbe(0) else evaluate(rule, now)
                 } else {
+                    // Playing videos change content constantly, so the full walk is throttled.
+                    if (now - lastContentCheck < CONTENT_THROTTLE_MS) return
+                    lastContentCheck = now
                     // Tab switches inside an app often only change content: full walk.
                     evaluate(rule, now)
                 }
@@ -232,8 +235,13 @@ class ReelService : AccessibilityService(), EngineSink {
                 if (rule == null) return
                 val m = match
                 if (m != null && matchPkg == pkg) {
-                    if (detector.isPagerScroll(event.source, m)) engine.onScroll(now)
-                    // Inner or custom scrollers: the probe confirms a page change structurally.
+                    if (detector.isPagerScroll(event.source, m)) {
+                        val dy = if (Build.VERSION.SDK_INT >= 28) event.scrollDeltaY else 0
+                        pipeline.onPagerScroll(event.fromIndex, event.toIndex, dy, now)
+                        publishPages()
+                    }
+                    // Smaller scrollers (comments, captions, menus) are not a swipe;
+                    // the probe still checks which page is on screen.
                     scheduleProbe(PROBE_AFTER_SCROLL_MS)
                 } else if (m == null && now - lastContentCheck >= CONTENT_THROTTLE_MS) {
                     lastContentCheck = now
@@ -246,6 +254,13 @@ class ReelService : AccessibilityService(), EngineSink {
     }
 
     override fun onInterrupt() = Unit
+
+    /** Rotation or a resized window: put the counter back at its (default or saved) place. */
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (::overlay.isInitialized) overlay.relayout()
+        if (::card.isInitialized) card.dismiss()
+    }
 
     override fun onUnbind(intent: Intent?): Boolean {
         shutdown()
@@ -262,8 +277,7 @@ class ReelService : AccessibilityService(), EngineSink {
     override fun openSession(token: Long, pkg: String, surface: String, at: Long) {
         app.writer.open(token, pkg, surface, at, app.rules.version, versionCodeOf(pkg))
         nudgeToken = token; nudgeVideos = 0; nudgeSent = false
-        tracker.reset()
-        lastKey = null
+        pipeline.onNewSession()
     }
 
     override fun countVideo(token: Long, itemKey: String, at: Long, dwellMs: Long) {
@@ -318,7 +332,7 @@ class ReelService : AccessibilityService(), EngineSink {
 
     private fun showCard() {
         val now = now()
-        card.show(engine.sessionCount, StatsLogic.timer(engine.sessionActiveMs(now)), todayTotal, anchorY = 0)
+        card.show(engine.sessionCount, StatsLogic.timer(engine.sessionActiveMs(now)), todayTotal, anchorY = overlay.anchorBottom())
     }
 
     /** Show the block screen when a blocking goal covers the app on screen. */
@@ -463,23 +477,38 @@ class ReelService : AccessibilityService(), EngineSink {
     private fun probe() {
         val m = match ?: return
         val now = now()
-        val keyed = try {
-            detector.currentItem(m)?.let { detector.keyFor(it, tracker) }
+        val snap = try {
+            detector.snapshot(m)
         } catch (e: RuntimeException) {
             null // node went stale mid-read
         }
-        if (keyed == null) {
-            engine.onObserve(null, now) // mid-swipe or still loading: never counts
-        } else {
-            val (key, moved) = keyed
-            val prev = lastKey
-            // A page change confirmed by structure is a swipe, for apps whose
-            // pager doesn't send scroll events itself.
-            if (moved || (prev != null && key != prev)) engine.onScroll(now)
-            lastKey = key
-            engine.onObserve(key, now)
+        when (snap) {
+            null -> engine.onObserve(null, now) // loading: never counts
+            is SurfaceDetector.Snapshot.MidSwipe -> {
+                pipeline.onMidSwipe(snap.upper, snap.lower, now)
+                DiagnosticsState.update { it.copy(pageDecision = "swipe in progress (two pages on screen)") }
+            }
+            is SurfaceDetector.Snapshot.Settled -> {
+                val r = pipeline.onSettledPage(snap.signature, snap.row, now)
+                if (r.changed) DiagLog.add(this, "page ${pipeline.pages.previousPosition} → ${r.position} in " +
+                    "${matchPkg?.let { appNames[it] } ?: "?"}: ${r.reason}")
+                DiagnosticsState.update { it.copy(pageDecision = r.reason) }
+            }
         }
+        publishPages()
         schedule()
+    }
+
+    private fun publishPages() {
+        val p = pipeline.pages
+        DiagnosticsState.update {
+            it.copy(
+                scrollEvents = p.scrollEvents,
+                pageChanges = p.pageChanges,
+                previousPosition = p.previousPosition,
+                position = p.position,
+            )
+        }
     }
 
     private fun scheduleProbe(delayMs: Long) {
@@ -538,5 +567,6 @@ class ReelService : AccessibilityService(), EngineSink {
         const val PROBE_AFTER_SCROLL_MS = 150L
         const val HEARTBEAT_MS = 5 * 60_000L
         const val CANDIDATE_LOG_MS = 30_000L
+        const val PROBE_THROTTLE_MS = 250L
     }
 }

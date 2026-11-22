@@ -21,6 +21,14 @@ object DiagnosticsState {
         val lastReasonAt: Long = 0L,
         val countedSinceConnect: Int = 0,
         val eventsSinceConnect: Long = 0L,
+        /** Pager scroll events received (from the pager itself, not comments or captions). */
+        val scrollEvents: Long = 0L,
+        /** Page changes confirmed (swipe evidence + a different page). */
+        val pageChanges: Int = 0,
+        val previousPosition: Int? = null,
+        val position: Int = 0,
+        /** Why the last probe did or didn't see a new video. */
+        val pageDecision: String? = null,
     )
 
     private val _state = MutableStateFlow(Snapshot())
