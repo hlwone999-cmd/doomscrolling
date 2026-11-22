@@ -37,6 +37,14 @@ Fix (00383ec): `PageTracker` + `FeedPipeline`
 
 Status: **fixed in code and built. Not yet verified on the phone.**
 
+**Follow-up (f4f8aea, run 44972030687).** The newest APK was still stuck at 1, so the service was traced again:
+- Window-state events re-ran `find()` mid-swipe. It failed while two pages were half visible, which dropped the surface and lost the swipe's scroll events. The held pager is now kept while it is visible in the same window.
+- `find()` preferred the outermost wrapper; it now picks the innermost pager.
+- The page signature follows full-screen containers up to 4 levels deep.
+- Rejected page decisions are now logged.
+
+Status: **built, not yet verified on the phone.**
+
 ### BUG-002: Dashboard showed sample data (88 = 42 + 29 + 17) and nothing counted on a Realme phone
 
 - Severity: S1 (core flow blocked, statistics not real)
