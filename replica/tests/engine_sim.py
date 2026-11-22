@@ -445,16 +445,19 @@ def no_recount_without_scroll(runs=2000, seed=11):
 # ---------------- PageTracker + FeedPipeline (port of detect/PageTracker.kt) ----------------
 class PageTracker:
     MOTION_WINDOW_MS = 1500
-    QUIET_MS = 300
+    PENDING_WINDOW_MS = 1000
+    TAIL_MS = 300
 
     def __init__(self):
         self.position = 0
         self.previousPosition = None
         self.scrollEvents = 0
+        self.tailEvents = 0
         self.pageChanges = 0
-        self.lastSignature = None
-        self.lastIndex = None
-        self._clear()
+        self.lateConfirmations = 0
+        self.rejectedChanges = 0
+        self.lastPageChangeAt = None
+        self.rebase()
 
     def _clear(self):
         self.lastMotionAt = None
@@ -463,12 +466,22 @@ class PageTracker:
         self.midLower = None
         self.scrollIndex = None
 
+    def _clear_pending(self):
+        self.pendingSince = None
+        self.pendingSignature = None
+        self.pendingIndex = None
+
     def reset(self):
         self.position = 0
         self.previousPosition = None
+        self.rebase()
+
+    def rebase(self):
         self.lastSignature = None
         self.lastIndex = None
+        self.topVaries = False
         self._clear()
+        self._clear_pending()
 
     def onScroll(self, f, t, dy, now):
         self.scrollEvents += 1
@@ -480,6 +493,10 @@ class PageTracker:
             self.scrollIndex = settled
         if not moving:
             return "NOISE"
+        c = self.lastPageChangeAt
+        if c is not None and 0 <= now - c < self.TAIL_MS:
+            self.tailEvents += 1
+            return "TAIL"
         self.lastMotionAt = now
         self.deltaSum += dy
         return "NEW_INDEX" if newIndex else "MOVING"
@@ -492,23 +509,41 @@ class PageTracker:
         index = row if row is not None else self.scrollIndex
         if self.lastSignature is None:
             self.lastSignature, self.lastIndex = signature, index
-            self._clear()
+            self._clear(); self._clear_pending()
             return (self.position, False, "video on entry")
-        prevIndex = self.lastIndex
         motionAt = self.lastMotionAt
-        moved = motionAt is not None and now - motionAt <= self.MOTION_WINDOW_MS
+        moved = motionAt is not None and 0 <= now - motionAt <= self.MOTION_WINDOW_MS
+        since = self.pendingSince
+        late = False
+        if since is not None:
+            followed = motionAt is not None and motionAt >= since and motionAt - since <= self.PENDING_WINDOW_MS
+            if followed:
+                late = True
+            elif now - since > self.PENDING_WINDOW_MS:
+                self.lastSignature = self.pendingSignature
+                if self.pendingIndex is not None:
+                    self.lastIndex = self.pendingIndex
+                self.rejectedChanges += 1
+                self._clear_pending()
+        prevIndex = self.lastIndex
         sigChanged = signature != self.lastSignature
         idxChanged = index is not None and prevIndex is not None and index != prevIndex
-        if not sigChanged and not idxChanged:
-            if index is not None:
-                self.lastIndex = index
-            if motionAt is None or now - motionAt >= self.QUIET_MS:
-                self._clear()
-            return (self.position, False, "same video")
-        if not moved:
+        topChanged = signature[:1] != self.lastSignature[:1]
+        if sigChanged and not topChanged and not idxChanged and self.topVaries:
             self.lastSignature = signature
             if index is not None:
                 self.lastIndex = index
+            self._clear_pending()
+            return (self.position, False, "same video (content rebuilt)")
+        if not sigChanged and not idxChanged:
+            if index is not None:
+                self.lastIndex = index
+            self._clear_pending()
+            return (self.position, False, "same video")
+        if not moved:
+            if self.pendingSince is None:
+                self.pendingSince = now
+            self.pendingSignature, self.pendingIndex = signature, index
             return (self.position, False, "page structure changed without a swipe")
         if idxChanged:
             step = index - prevIndex
@@ -520,39 +555,85 @@ class PageTracker:
             step = -1
         else:
             step = 1
+        if late:
+            self.lateConfirmations += 1
+        if topChanged:
+            self.topVaries = True
         self.previousPosition = self.position
         self.position += step
         self.pageChanges += 1
+        self.lastPageChangeAt = now
         self.lastSignature, self.lastIndex = signature, index
-        self._clear()
+        self._clear(); self._clear_pending()
         return (self.position, True, "page changed")
+
+
+def is_motion(kind):
+    return kind in ("MOVING", "NEW_INDEX")
 
 
 class FeedPipeline:
     def __init__(self, engine):
         self.engine = engine
         self.pages = PageTracker()
+        self.countable = True
 
     def onNewSession(self):
         self.pages.reset()
 
+    def onEnterSurface(self):
+        self.pages.rebase()
+
     def onPagerScroll(self, f, t, dy, now):
         k = self.pages.onScroll(f, t, dy, now)
-        if k != "NOISE":
+        if is_motion(k) and self.countable:
             self.engine.onScroll(now)
         return k
 
     def onMidSwipe(self, upper, lower, now):
         self.pages.onMidSwipe(upper, lower, now)
-        self.engine.onScroll(now)
+        if self.countable:
+            self.engine.onScroll(now)
         self.engine.onObserve(None, now)
 
     def onSettledPage(self, signature, row, now):
         r = self.pages.onSettled(signature, row, now)
-        if r[1]:
+        if r[1] and self.countable:
             self.engine.onScroll(now)
         self.engine.onObserve("p:%d" % r[0], now)
         return r
+
+
+# Port of detect/ScrollSource.kt
+def judge(relation, same_size, horizontal_only):
+    """Returns (accepted, indexes_usable)."""
+    if horizontal_only:
+        return (False, False)
+    if relation in ("PAGER", "PAGER_LIST"):
+        return (True, True)
+    if relation == "UNRELATED" or not same_size:
+        return (False, False)
+    return (True, False)
+
+
+class FeedContext:
+    MIN_NAV_ITEMS = 4
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.stable = "UNKNOWN"
+        self.last = None
+
+    def onReading(self, items):
+        if items < 0:
+            return self.stable
+        k = "MAIN_FEED" if items >= self.MIN_NAV_ITEMS else "OTHER"
+        if k == self.last:
+            self.stable = k
+        self.last = k
+        return self.stable
 
 
 class FeedHarness:
@@ -589,6 +670,24 @@ class FeedHarness:
 
     def keys(self):
         return [c[1] for c in self.sink.counted]
+
+    def scroll_from(self, relation, f=-1, t=-1, dy=900, dx=0, same_size=True):
+        """What the service does with a scroll event: judge its source, then feed it."""
+        ok, idx = judge(relation, same_size, dx != 0 and dy == 0)
+        if not ok:
+            return "IGNORED"
+        return self.feed.onPagerScroll(f if idx else -1, t if idx else -1, dy, self.now)
+
+    def late_swipe(self, a, b):
+        """Device order seen on the Realme (BUG-006): the new page is up before the scroll event."""
+        self.feed.onSettledPage([b, b + "-inner"], None, self.now); self.advance(60)
+        k = self.feed.onPagerScroll(-1, -1, 900, self.now)
+        if is_motion(k) and self.feed.pages.pendingSince is not None:
+            self.feed.onSettledPage([b, b + "-inner"], None, self.now)  # the service probes at once
+        self.advance(100)
+        for _ in range(3):                                               # tail of the same swipe
+            self.feed.onPagerScroll(-1, -1, 300, self.now); self.advance(50)
+        self.settle(b)
 
 
 def feed_scenarios():
@@ -678,7 +777,7 @@ def feed_scenarios():
     t.onScroll(0, 1, 0, 500); t.onScroll(1, 1, 0, 600); r = t.onSettled(["W"], None, 700)
     check("tracker: constantWrapperWithChangingIndexStillMoves", r[1] and r[0] == 1, r)
     t = PageTracker(); t.onSettled(["A"], 4, 0); t.onScroll(4, 5, 0, 100); t.onScroll(5, 5, 0, 200); r1 = t.onSettled(["B"], None, 300)
-    t.onScroll(5, 4, 0, 400); t.onScroll(4, 4, 0, 500); r2 = t.onSettled(["A"], None, 600)
+    t.onScroll(5, 4, 0, 1400); t.onScroll(4, 4, 0, 1500); r2 = t.onSettled(["A"], None, 1600)
     check("tracker: adapterIndexGivesStepAndDirection", r1[0] == 1 and r2[0] == 0, (r1, r2))
     t = PageTracker(); t.onSettled(["B"], None, 0); t.onMidSwipe("A", "B", 100); r = t.onSettled(["A"], None, 200)
     check("tracker: midSwipeTellsDirection", r[0] == -1, r)
@@ -689,6 +788,80 @@ def feed_scenarios():
     t = PageTracker(); t.onSettled(["A"], 3, 0)
     check("tracker: noOpScrollIsNoise", t.onScroll(3, 3, 0, 10) == "NOISE")
     check("tracker: newIndexIsReported", t.onScroll(4, 4, 0, 20) == "NEW_INDEX")
+
+    print("BUG-006: scroll/page correlation, scroll sources, feed context")
+    h = FeedHarness(); h.settle("V0")
+    for i in range(1, 11):
+        h.late_swipe("V%d" % (i - 1), "V%d" % i)
+    check("bug006: tenLateEvidenceSwipesGiveTenCounts", h.keys() == ["p:%d" % i for i in range(1, 11)], h.keys())
+
+    h = FeedHarness(); h.settle("A")
+    h.feed.onSettledPage(["B", "B-inner"], None, h.now); h.advance(1500)
+    h.feed.onPagerScroll(-1, -1, 900, h.now); h.feed.onSettledPage(["B", "B-inner"], None, h.now); h.advance(500)
+    check("bug006: evidenceTooLateDoesNotCount", h.keys() == [], h.keys())
+
+    h = FeedHarness(); h.settle("A")
+    h.scroll_from("PAGER_LIST", 0, 1); h.advance(40)
+    h.feed.onMidSwipe("A", "B", h.now); h.advance(40)
+    h.scroll_from("PAGER_LIST", 1, 1); h.advance(150); h.settle("B")
+    check("bug006: eventFromChildListSnapshotFromParent", h.keys() == ["p:1"], h.keys())
+
+    h = FeedHarness(); h.settle("A")
+    h.scroll_from("INSIDE_PAGER", 7, 7); h.advance(150); h.settle("B")
+    check("bug006: sameSizeNodeInsidePagerGivesMovementOnly", h.keys() == ["p:1"] and h.feed.pages.lastIndex is None,
+          (h.keys(), h.feed.pages.lastIndex))
+
+    h = FeedHarness(); h.settle("A")
+    k1 = h.scroll_from("AROUND_PAGER", 0, 1, dy=0, dx=1080)
+    k2 = h.scroll_from("UNRELATED", -1, -1, dy=400, same_size=False)
+    h.advance(150); h.settle("B")
+    check("bug006: tabSwipeAndCommentScrollAreNotEvidence", k1 == "IGNORED" and k2 == "IGNORED" and h.keys() == [],
+          (k1, k2, h.keys()))
+
+    h = FeedHarness(); h.settle("A")
+    h.feed.onPagerScroll(-1, -1, 300, h.now); h.advance(40)
+    h.feed.onMidSwipe("A-cover", "B-cover", h.now); h.advance(40)       # mid-swipe nodes differ from the final ones
+    h.feed.onSettledPage(["B", "B-cover"], None, h.now); h.advance(100)
+    h.feed.onPagerScroll(-1, -1, 200, h.now)                            # tail event
+    h.feed.onSettledPage(["B", "B-player"], None, h.now); h.advance(300) # player replaces the cover: child id changes
+    h.feed.onPagerScroll(-1, -1, 200, h.now); h.advance(800)            # a straggler event after the tail
+    h.feed.onSettledPage(["B", "B-player"], None, h.now); h.advance(500)
+    check("bug006: childIdChangesDuringSwipeCountsOnce", h.keys() == ["p:1"], h.keys())
+
+    h = FeedHarness()
+    h.feed.onSettledPage(["Wrap", "Page0"], None, h.now); h.advance(500)
+    for i in range(1, 6):
+        h.feed.onSettledPage(["Wrap", "Page%d" % i], None, h.now); h.advance(60)
+        h.feed.onPagerScroll(-1, -1, 900, h.now); h.feed.onSettledPage(["Wrap", "Page%d" % i], None, h.now)
+        h.advance(500)
+    check("bug006: constantWrapperChangingChildCounts", h.keys() == ["p:%d" % i for i in range(1, 6)], h.keys())
+
+    h = FeedHarness(); h.settle("A")
+    for _ in range(8):
+        h.feed.onPagerScroll(-1, -1, 250, h.now); h.advance(30)
+    h.feed.onSettledPage(["B", "B-inner"], None, h.now)
+    for _ in range(5):
+        h.advance(40); h.feed.onPagerScroll(-1, -1, 120, h.now)
+    h.settle("B"); h.advance(2000)
+    check("bug006: manyMovingEventsOneSwipeOneCount", h.keys() == ["p:1"] and h.feed.pages.tailEvents == 5,
+          (h.keys(), h.feed.pages.tailEvents))
+
+    fc = FeedContext(); fc.onReading(0); first = fc.stable; fc.onReading(1)
+    check("bug006: searchViewerIsNotMainFeed", first == "UNKNOWN" and fc.stable == "OTHER", (first, fc.stable))
+    fc = FeedContext(); fc.onReading(5); fc.onReading(5); fc.onReading(0)
+    check("bug006: oneFlickerDoesNotChangeTheVerdict", fc.stable == "MAIN_FEED", fc.stable)
+
+    h = FeedHarness(); fc = FeedContext(); fc.onReading(0); fc.onReading(0)
+    h.feed.countable = fc.stable == "MAIN_FEED"
+    h.settle("S0")
+    for i in range(1, 4):
+        h.swipe("S%d" % (i - 1), "S%d" % i)
+    no_search = h.keys() == []
+    h.e.onOffSurface(h.now); h.advance(3000)
+    h.e.onSurface("tiktok", "tiktok_feed", h.now); h.feed.onEnterSurface()
+    fc.reset(); fc.onReading(5); fc.onReading(5); h.feed.countable = fc.stable == "MAIN_FEED"
+    h.settle("F0"); h.swipe("F0", "F1")
+    check("bug006: searchViewerSwipesDoNotCountMainFeedDoes", no_search and len(h.keys()) == 1, h.keys())
 
 
 if __name__ == "__main__":

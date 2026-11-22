@@ -9,12 +9,43 @@ id; each one names the files changed.
 | severity | open | fixed |
 | --- | --- | --- |
 | S1 | 0 | 2 (BUG-002, BUG-003: fixed in code; device check pending) |
-| S2 | 0 | 1 (BUG-005: fixed in code; device check pending) |
+| S2 | 0 | 2 (BUG-005, BUG-006: fixed in code; device check pending) |
 | S3 | 0 | 0 |
 | S4 | 0 | 1 |
 
 Round 2 (full feature set): no new bug reproduced. Two "to check" items
 were resolved in code (C-6, C-7); four new ones need a phone (C-10 to C-13).
+
+### BUG-006: TikTok on the Realme: swipes seen, page changes rejected ("without a swipe")
+
+- Severity: S2 (core flow: counts missing)
+- Flow / case: F02-H1, F02-E1..E5
+- Device: Realme, TikTok, APK from run 44976396186 (user report, 2026-11-21)
+
+Evidence from the phone (Diagnostics and log)
+- Scroll events 6, page transitions 0, counted 0; last scroll kind MOVING; last page decision "same video"; position – → 0.
+- Log: `page not counted in TikTok: page structure changed without a swipe: not a new video (pager scroll events so far: 5)`.
+- Screen kind changed between `no bottom navigation` (13:54:45) and `main feed (bottom navigation, 5 items)` (13:55:25).
+
+Diagnosis (source; the event order on the phone is inferred, see "not yet proven")
+- **Order of signals.** `PageTracker` required the swipe evidence to arrive *before* the new page. When a probe saw the new page first, it was taken as a rebuild and became the baseline at once; the scroll event that followed then found "the same video". Scroll events were received (6) but every change was rejected. The Python port shows the symptom exactly: with that rule, 10 swipes in this order gave 5 counts ("several swipes needed") or none.
+- **Scroll source not checked.** Any scroll event from a node of pager size was used, including its indexes. TikTok has a full-screen horizontal tab pager around the video pager; its indexes could be mixed with the video pager's.
+- **Pager baseline kept across visits.** On returning to the video screen the old page stayed the baseline, so the arrival page was compared with a page from a different screen.
+- **Feed kind from one reading.** "Main feed or not" came from a single snapshot at entry, which can be taken before the bottom bar is laid out.
+
+Fix
+- `PageTracker`: evidence and page change are correlated in either order. A page seen first waits up to 1 s (`PENDING_WINDOW_MS`) for evidence; evidence then confirms it at once (the service probes immediately). Evidence is no longer erased by a same-page probe; it expires after 1.5 s.
+- Scroll events in the 300 ms after a counted change are the tail of that swipe (`TAIL`), so many MOVING events give one count. A change inside the same top-level page (cover replaced by the player) is not a new video once the pager's pages are known to be its top-level children.
+- `ScrollSource` + `SurfaceDetector.scrollRelation`: each scroll event's source is classified against the held pager (the pager, its own list, inside it, around it, same size only, unrelated). Indexes are used only from the pager or its list; sideways scrolls and small scrollers are ignored. IDs need not match exactly.
+- The baseline is rebased on each arrival and when the app replaces its pager.
+- `FeedContext`: the bottom-navigation reading is taken at entry, 400 ms later and every second; the verdict changes only after two readings agree. For TikTok (`countOnlyMainFeed` in the rules, v3), swipes count only in the main feed.
+- Diagnostics: scroll source (class, view-id entry, node id, from/to, item count, scrollY, dY, dX), its relation to the pager and how it was used, the pager node and replacements, last probe time and what it saw, evidence held since, page waiting since, late confirmations, rejected changes. Structure only, no text.
+
+Tests
+- Python port (`engine_sim.py`): 11 BUG-006 checks, all passing; with the old "adopt at once" rule, `tenLateEvidenceSwipesGiveTenCounts` gives 5 of 10.
+- JVM: `FeedPipelineTest` (11 new) and `PageTrackerTest` (5 new): late evidence, evidence too late, events from the child list with snapshots from the parent, same-size inner node, tab and comment scrolls, child ids changing mid-swipe, constant wrapper, many MOVING events → one count, search viewer not the main feed.
+
+Status: **fixed in code. Not proven on the phone.** The exact event order on the Realme is still an inference; the new Diagnostics fields show it directly.
 
 ### BUG-003: Only the first video counted on TikTok (counter stuck at 1)
 

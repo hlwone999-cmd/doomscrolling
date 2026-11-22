@@ -12,6 +12,12 @@ data class AppRule(
     val genericFallback: Boolean,
     /** Target-app versionCode ranges that passed the device test protocol. */
     val verifiedVersions: List<LongRange>,
+    /**
+     * Count only swipes in the app's main feed (bottom navigation visible), not in
+     * a video viewer opened from search, a profile or a link. Set only where a real
+     * phone showed the two apart (TikTok, BUG-006).
+     */
+    val countOnlyMainFeed: Boolean = false,
 ) {
     /** Unknown version (app not installed) is never "verified". */
     fun isVerified(versionCode: Long?): Boolean =
@@ -54,6 +60,7 @@ data class Rules(val version: Int, val settleMs: Long, val apps: Map<String, App
                     pagerIdHints = hintList,
                     genericFallback = o.optBoolean("genericFallback", true),
                     verifiedVersions = ranges,
+                    countOnlyMainFeed = o.optBoolean("countOnlyMainFeed", false),
                 )
                 rule.packageName to rule
             }

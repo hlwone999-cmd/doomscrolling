@@ -323,4 +323,12 @@
     <string name="diag_t_page">Last page change</string>
     <string name="diag_t_count">Last count accepted</string>
     <string name="diag_t_write">Last database write (duration)</string>
+    <string name="diag_scroll_source">Last scroll event source (class, id, indexes, deltas)</string>
+    <string name="diag_scroll_verdict">Relation to the watched pager → use</string>
+    <string name="diag_scroll_counts">Scroll events used / ignored / swipe tail</string>
+    <string name="diag_pager_node">Watched pager (times the app replaced it)</string>
+    <string name="diag_snapshot">Last page probe</string>
+    <string name="diag_motion">Swipe evidence held since</string>
+    <string name="diag_pending">New page waiting for swipe evidence since</string>
+    <string name="diag_tracker">Late confirmations / changes rejected (no swipe)</string>
 </resources>

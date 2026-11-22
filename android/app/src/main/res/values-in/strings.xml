@@ -314,4 +314,12 @@
     <string name="diag_t_page">Perpindahan halaman terakhir</string>
     <string name="diag_t_count">Hitungan terakhir diterima</string>
     <string name="diag_t_write">Penulisan database terakhir (durasi)</string>
+    <string name="diag_scroll_source">Sumber event scroll terakhir (class, id, indeks, delta)</string>
+    <string name="diag_scroll_verdict">Hubungan dengan pager yang dipantau → dipakai untuk</string>
+    <string name="diag_scroll_counts">Event scroll dipakai / diabaikan / ekor swipe</string>
+    <string name="diag_pager_node">Pager yang dipantau (berapa kali diganti aplikasi)</string>
+    <string name="diag_snapshot">Probe halaman terakhir</string>
+    <string name="diag_motion">Bukti swipe aktif sejak</string>
+    <string name="diag_pending">Halaman baru menunggu bukti swipe sejak</string>
+    <string name="diag_tracker">Konfirmasi terlambat / perubahan ditolak (tanpa swipe)</string>
 </resources>

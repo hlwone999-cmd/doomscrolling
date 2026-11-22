@@ -4,7 +4,11 @@ import app.tidemark.detect.CountingEngine
 import app.tidemark.detect.EndReason
 import app.tidemark.detect.EngineConfig
 import app.tidemark.detect.EngineSink
+import app.tidemark.detect.FeedContext
 import app.tidemark.detect.FeedPipeline
+import app.tidemark.detect.PageTracker
+import app.tidemark.detect.ScrollSource
+import app.tidemark.detect.ScrollSource.Relation
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -69,6 +73,23 @@ class FeedPipelineTest {
         feed.onPagerScroll(fromIdx, fromIdx + 1, dy / 2, now); advance(40)
         feed.onMidSwipe(from, to, now); advance(40)
         feed.onPagerScroll(toIdx, toIdx, dy / 2, now); advance(150)
+        settle(to)
+    }
+
+    /** What the service does with a scroll event: judge the source against the held pager, then feed it. */
+    private fun scrollFrom(relation: Relation, from: Int = -1, to: Int = -1, dy: Int = 900, dx: Int = 0, sameSize: Boolean = true): PageTracker.Scroll? {
+        val v = ScrollSource.judge(relation, sameSize, horizontalOnly = dx != 0 && dy == 0)
+        if (!v.accepted) return null
+        return if (v.indexesUsable) feed.onPagerScroll(from, to, dy, now) else feed.onPagerScroll(-1, -1, dy, now)
+    }
+
+    /** Order seen on the Realme phone (BUG-006): the new page is up before the scroll event. */
+    private fun lateSwipe(to: String) {
+        feed.onSettledPage(listOf(to, "$to-inner"), null, now); advance(60)
+        val k = feed.onPagerScroll(-1, -1, 900, now)
+        if (k.isMotion && feed.pages.pendingSince != null) feed.onSettledPage(listOf(to, "$to-inner"), null, now) // probe at once
+        advance(100)
+        repeat(3) { feed.onPagerScroll(-1, -1, 300, now); advance(50) } // tail of the same swipe
         settle(to)
     }
 
@@ -195,6 +216,110 @@ class FeedPipelineTest {
         repeat(10) { advance(30); feed.onPagerScroll(1, 1, 0, now) } // trailing no-op events
         advance(260 - (now - t0))
         assertEquals(listOf("p:1"), sink.counted)
+    }
+
+    // ---- BUG-006: scroll/page correlation on the real phone ----
+
+    @Test fun tenSwipesWithLateScrollEventsGiveTenCounts() {
+        settle("V0")
+        for (i in 1..10) lateSwipe("V$i")
+        assertEquals((1..10).map { "p:$it" }, sink.counted)
+    }
+
+    @Test fun lateSwipeIsCountedPromptly() {
+        settle("A")
+        feed.onSettledPage(listOf("B", "B-inner"), null, now); advance(60)
+        feed.onPagerScroll(-1, -1, 900, now)
+        feed.onSettledPage(listOf("B", "B-inner"), null, now)
+        advance(260)
+        assertEquals(listOf("p:1"), sink.counted)
+    }
+
+    @Test fun scrollEventFromChildListAndSnapshotFromParentPager() {
+        // ViewPager2: the inner RecyclerView sends the scroll events, the probe reads the pager.
+        settle("A")
+        scrollFrom(Relation.PAGER_LIST, 0, 1); advance(40)
+        feed.onMidSwipe("A", "B", now); advance(40)
+        scrollFrom(Relation.PAGER_LIST, 1, 1); advance(150)
+        settle("B")
+        assertEquals(listOf("p:1"), sink.counted)
+    }
+
+    @Test fun sameSizeNodeInsideThePagerGivesMovementButNotIndexes() {
+        settle("A")
+        assertEquals(PageTracker.Scroll.MOVING, scrollFrom(Relation.INSIDE_PAGER, 7, 7)); advance(150)
+        settle("B")
+        assertEquals(listOf("p:1"), sink.counted)
+    }
+
+    @Test fun tabSwipeAndCommentScrollAreNotSwipeEvidence() {
+        settle("A")
+        assertEquals(null, scrollFrom(Relation.AROUND_PAGER, 0, 1, dy = 0, dx = 1080)) // For You / Following tabs
+        assertEquals(null, scrollFrom(Relation.UNRELATED, dy = 400, sameSize = false))   // comment list
+        advance(150)
+        settle("B")
+        assertTrue(sink.counted.isEmpty())
+    }
+
+    @Test fun childIdsChangingDuringTheSwipeCountOnce() {
+        settle("A")
+        feed.onPagerScroll(-1, -1, 300, now); advance(40)
+        feed.onMidSwipe("A-cover", "B-cover", now); advance(40)           // mid-swipe nodes differ from the final ones
+        feed.onSettledPage(listOf("B", "B-cover"), null, now); advance(100)
+        feed.onPagerScroll(-1, -1, 200, now)                              // tail
+        feed.onSettledPage(listOf("B", "B-player"), null, now); advance(300) // the player replaces the cover
+        feed.onPagerScroll(-1, -1, 200, now); advance(800)                // a straggler after the tail
+        feed.onSettledPage(listOf("B", "B-player"), null, now); advance(500)
+        assertEquals(listOf("p:1"), sink.counted)
+    }
+
+    @Test fun constantWrapperWithChangingChildCountsEachSwipe() {
+        feed.onSettledPage(listOf("Wrap", "Page0"), null, now); advance(500)
+        for (i in 1..5) {
+            feed.onSettledPage(listOf("Wrap", "Page$i"), null, now); advance(60)
+            feed.onPagerScroll(-1, -1, 900, now)
+            feed.onSettledPage(listOf("Wrap", "Page$i"), null, now); advance(500)
+        }
+        assertEquals((1..5).map { "p:$it" }, sink.counted)
+    }
+
+    @Test fun manyMovingEventsInOneSwipeGiveOneCount() {
+        settle("A")
+        repeat(8) { feed.onPagerScroll(-1, -1, 250, now); advance(30) }
+        feed.onSettledPage(listOf("B", "B-inner"), null, now)
+        repeat(5) { advance(40); feed.onPagerScroll(-1, -1, 120, now) }
+        settle("B"); advance(2_000)
+        assertEquals(listOf("p:1"), sink.counted)
+        assertEquals(5L, feed.pages.tailEvents)
+    }
+
+    @Test fun searchViewerIsNotTheMainFeed() {
+        val fc = FeedContext()
+        fc.onReading(0)
+        assertEquals(FeedContext.Kind.UNKNOWN, fc.stable) // one reading is not enough
+        fc.onReading(1)
+        assertEquals(FeedContext.Kind.OTHER, fc.stable)
+        val main = FeedContext()
+        main.onReading(5); main.onReading(5); main.onReading(0) // one flicker keeps the verdict
+        assertEquals(FeedContext.Kind.MAIN_FEED, main.stable)
+    }
+
+    @Test fun swipesInTheSearchViewerDoNotCountButTheMainFeedDoes() {
+        val fc = FeedContext()
+        fc.onReading(0); fc.onReading(0)
+        feed.setCountable(fc.stable == FeedContext.Kind.MAIN_FEED, "not the main feed")
+        settle("S0")
+        for (i in 1..3) swipe("S${i - 1}", "S$i")
+        assertTrue(sink.counted.isEmpty())
+        // Back to the For You feed.
+        engine.onOffSurface(now); advance(3_000)
+        engine.onSurface("com.zhiliaoapp.musically", "tiktok_feed", now)
+        feed.onEnterSurface()
+        fc.reset(); fc.onReading(5); fc.onReading(5)
+        feed.setCountable(fc.stable == FeedContext.Kind.MAIN_FEED)
+        settle("F0")
+        swipe("F0", "F1")
+        assertEquals(1, sink.counted.size)
     }
 
     @Test fun leavingTheFeedEndsTheSessionAndHidesTheOverlay() {

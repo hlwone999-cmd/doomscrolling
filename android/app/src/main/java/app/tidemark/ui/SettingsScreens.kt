@@ -541,6 +541,21 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                 DiagLine(stringResource(R.string.diag_feed_context), live.feedContext ?: none)
                 DiagLine(stringResource(R.string.diag_t_scroll),
                     if (live.lastScrollAt > 0) "${clockSec(live.lastScrollAt)} · ${live.lastScrollKind}" else none)
+                DiagLine(stringResource(R.string.diag_scroll_source),
+                    live.scrollSource?.let { "$it · ${clockSec(live.lastScrollAt)}" } ?: none)
+                DiagLine(stringResource(R.string.diag_scroll_verdict), live.scrollVerdict ?: none)
+                DiagLine(stringResource(R.string.diag_scroll_counts),
+                    "${live.scrollAccepted} / ${live.scrollIgnored} / ${live.tailEvents}")
+                DiagLine(stringResource(R.string.diag_pager_node),
+                    live.pagerNode?.let { "$it · ${live.pagerReplaced}×" } ?: none)
+                DiagLine(stringResource(R.string.diag_snapshot),
+                    live.lastSnapshot?.let { "${clockSec(live.lastSnapshotAt)} · $it" } ?: none)
+                DiagLine(stringResource(R.string.diag_motion),
+                    if (live.motionAt > 0) clockSec(live.motionAt) else stringResource(R.string.diag_no))
+                DiagLine(stringResource(R.string.diag_pending),
+                    if (live.pendingSince > 0) clockSec(live.pendingSince) else stringResource(R.string.diag_no))
+                DiagLine(stringResource(R.string.diag_tracker),
+                    "${live.lateConfirmations} / ${live.rejectedChanges}", warn = live.rejectedChanges > 0)
                 DiagLine(stringResource(R.string.diag_t_page), if (live.lastPageChangeAt > 0) clockSec(live.lastPageChangeAt) else none)
                 DiagLine(stringResource(R.string.diag_t_count), if (live.lastCountAt > 0) clockSec(live.lastCountAt) else none)
                 DiagLine(stringResource(R.string.diag_t_write),

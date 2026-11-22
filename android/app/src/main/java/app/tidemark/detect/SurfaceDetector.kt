@@ -68,11 +68,44 @@ class SurfaceDetector {
         return hinted ?: best
     }
 
-    /** True when a scroll event came from the pager or a container of the same size. */
-    fun isPagerScroll(source: AccessibilityNodeInfo?, match: Match): Boolean {
+    /** The scroll event's source covers the pager (>= 80 % height, >= 90 % width). */
+    fun sameSize(source: AccessibilityNodeInfo?, match: Match): Boolean {
         if (source == null) return false
         val b = Rect().also { source.getBoundsInScreen(it) }
         return b.height() >= match.bounds.height() * 0.8f && b.width() >= match.bounds.width() * 0.9f
+    }
+
+    /**
+     * How a scroll event's source relates to the held pager (BUG-006): the pager
+     * itself, its inner list (ViewPager2's RecyclerView), a node inside it, a
+     * container around it, or unrelated. Compares node identity (window and
+     * node id) by walking parents a few levels; reads no text.
+     */
+    fun scrollRelation(source: AccessibilityNodeInfo?, match: Match): ScrollSource.Relation {
+        if (source == null) return ScrollSource.Relation.UNRELATED
+        if (source == match.pager) return ScrollSource.Relation.PAGER
+        if (source == listNode(match.pager)) return ScrollSource.Relation.PAGER_LIST
+        var p = source.parent
+        var steps = 0
+        while (p != null && steps < PARENT_STEPS) {
+            if (p == match.pager) return ScrollSource.Relation.INSIDE_PAGER
+            p = p.parent; steps++
+        }
+        var q = match.pager.parent
+        steps = 0
+        while (q != null && steps < PARENT_STEPS) {
+            if (q == source) return ScrollSource.Relation.AROUND_PAGER
+            q = q.parent; steps++
+        }
+        return if (sameSize(source, match)) ScrollSource.Relation.SIZE_ONLY else ScrollSource.Relation.UNRELATED
+    }
+
+    /** Class and view-id entry of a node, for diagnostics. Never text. */
+    fun describeNode(node: AccessibilityNodeInfo?): String {
+        if (node == null) return "no source"
+        return "${node.className?.toString()?.substringAfterLast('.') ?: "?"}" +
+            (node.viewIdResourceName?.let { " #" + it.substringAfter(":id/") } ?: "") +
+            " @" + Integer.toHexString(node.hashCode())
     }
 
     /**
@@ -127,15 +160,15 @@ class SurfaceDetector {
     }
 
     /**
-     * Is the app's bottom navigation bar on screen? Main feeds (TikTok For You,
-     * the Reels tab, the Shorts tab) show one; videos opened from search, a
-     * profile or a link usually don't. Reported in Diagnostics and the log so
-     * the two can be told apart on a real phone. Structure only: clickable
-     * elements in a row along the bottom 12 % of the window, never their text.
+     * Clickable items in a row along the bottom 12 % of the window: the app's
+     * bottom navigation bar. Main feeds (TikTok For You, the Reels tab, the
+     * Shorts tab) show one; videos opened from search, a profile or a link
+     * usually don't. -1 when the window can't be read. Structure only, never
+     * text. FeedContext turns readings into a stable verdict.
      */
-    fun feedContext(root: AccessibilityNodeInfo, match: Match): String {
+    fun bottomNavItems(root: AccessibilityNodeInfo): Int {
         val window = Rect().also { root.getBoundsInScreen(it) }
-        if (window.isEmpty) return "unknown"
+        if (window.isEmpty) return -1
         val band = window.bottom - (window.height() * 0.12f).toInt()
         val centres = mutableSetOf<Int>()
         walk(root, MAX_NODES) { node, b, _ ->
@@ -144,8 +177,7 @@ class SurfaceDetector {
             ) centres += (b.centerX() * 10 / window.width()) // tenth of the width the item sits in
             true
         }
-        return if (centres.size >= 4) "main feed (bottom navigation, ${centres.size} items)"
-        else "no bottom navigation (search, profile or detail view?)"
+        return centres.size
     }
 
     /**
@@ -268,5 +300,6 @@ class SurfaceDetector {
         const val MAX_NODES = 800
         const val MAX_DEPTH = 35
         const val SIGNATURE_DEPTH = 4
+        const val PARENT_STEPS = 8
     }
 }

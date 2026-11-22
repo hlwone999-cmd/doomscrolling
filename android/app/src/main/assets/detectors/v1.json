@@ -1,55 +1,81 @@
 {
-  "version": 2,
-  "_note": "Bundled detection rules. Structure only: no text is ever read. A short-video screen is a container that fills the window and whose current item fills the container (full-screen pages), scrolling vertically. pagerIdHints are view-id fragments that only raise confidence; the structure must still match, so a wrong guess can't cause counts on its own. verifiedVersions lists target-app versionCode ranges that passed the device test protocol; empty until then.",
+  "version": 3,
+  "_note": "Bundled detection rules. Structure only: no text is ever read. A short-video screen is a container that fills the window and whose current item fills the container (full-screen pages), scrolling vertically. pagerIdHints are view-id fragments that only raise confidence; the structure must still match, so a wrong guess can't cause counts on its own. verifiedVersions lists target-app versionCode ranges that passed the device test protocol; empty until then. countOnlyMainFeed: swipes count only while the app's bottom navigation is on screen (main feed), not in a viewer opened from search or a profile; set only for apps where a real phone showed the difference.",
   "settleMs": 250,
   "apps": [
     {
       "package": "com.instagram.android",
       "name": "Instagram",
       "surface": "reels",
-      "pagerIdHints": ["clips_viewer", "clips_tab", "clips_", "reel"],
+      "pagerIdHints": [
+        "clips_viewer",
+        "clips_tab",
+        "clips_",
+        "reel"
+      ],
       "genericFallback": true,
-      "verifiedVersions": []
+      "verifiedVersions": [],
+      "countOnlyMainFeed": false
     },
     {
       "package": "com.google.android.youtube",
       "name": "YouTube",
       "surface": "shorts",
-      "pagerIdHints": ["reel_recycler", "reel_watch", "reel_", "shorts"],
+      "pagerIdHints": [
+        "reel_recycler",
+        "reel_watch",
+        "reel_",
+        "shorts"
+      ],
       "genericFallback": true,
-      "verifiedVersions": []
+      "verifiedVersions": [],
+      "countOnlyMainFeed": false
     },
     {
       "package": "com.zhiliaoapp.musically",
       "name": "TikTok",
       "surface": "tiktok_feed",
-      "pagerIdHints": ["viewpager", "view_pager"],
+      "pagerIdHints": [
+        "viewpager",
+        "view_pager"
+      ],
       "genericFallback": true,
-      "verifiedVersions": []
+      "verifiedVersions": [],
+      "countOnlyMainFeed": true
     },
     {
       "package": "com.ss.android.ugc.trill",
       "name": "TikTok",
       "surface": "tiktok_feed",
-      "pagerIdHints": ["viewpager", "view_pager"],
+      "pagerIdHints": [
+        "viewpager",
+        "view_pager"
+      ],
       "genericFallback": true,
-      "verifiedVersions": []
+      "verifiedVersions": [],
+      "countOnlyMainFeed": true
     },
     {
       "package": "com.facebook.katana",
       "name": "Facebook",
       "surface": "fb_reels",
-      "pagerIdHints": ["reel"],
+      "pagerIdHints": [
+        "reel"
+      ],
       "genericFallback": true,
-      "verifiedVersions": []
+      "verifiedVersions": [],
+      "countOnlyMainFeed": false
     },
     {
       "package": "com.snapchat.android",
       "name": "Snapchat",
       "surface": "spotlight",
-      "pagerIdHints": ["spotlight"],
+      "pagerIdHints": [
+        "spotlight"
+      ],
       "genericFallback": true,
-      "verifiedVersions": []
+      "verifiedVersions": [],
+      "countOnlyMainFeed": false
     }
   ]
 }

@@ -151,3 +151,15 @@ See BUG-003. Device verification on TikTok, Reels and Shorts is still pending.
 | 44976396186 | d29108e | **success: 80 JVM tests, 0 failed** (CoreTest 5, CountingEngineTest 21, FeedPipelineTest 15, LogicTest 12, PageTrackerTest 10, PositionTrackerTest 8, RoomDatabaseTest 9); debug APK 11.4 MB, no INTERNET |
 
 Device verification of BUG-003/004/005 on the Realme is still pending.
+
+## Round 8: scroll/page correlation and feed kind (BUG-006) (2026-11-21)
+
+Device report (Realme, TikTok, APK from run 44976396186): 6 pager scroll
+events, 0 page changes, "page structure changed without a swipe". Changes:
+`PageTracker` (order-independent correlation, tail, same-page rebuilds,
+rebase), new `ScrollSource.kt` (scroll source relation, `FeedContext`),
+`SurfaceDetector` (relation, node description, bottom-nav item count),
+`ReelService` (wiring, immediate probe on confirming evidence, feed checks,
+structured scroll log), Diagnostics rows, rules v3 (`countOnlyMainFeed` for
+TikTok). CI results are added below once the run finishes.
+

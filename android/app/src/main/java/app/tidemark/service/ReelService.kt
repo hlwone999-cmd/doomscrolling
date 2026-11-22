@@ -30,8 +30,10 @@ import app.tidemark.detect.CountingEngine
 import app.tidemark.detect.EndReason
 import app.tidemark.detect.EngineConfig
 import app.tidemark.detect.EngineSink
+import app.tidemark.detect.FeedContext
 import app.tidemark.detect.FeedPipeline
 import app.tidemark.detect.PageTracker
+import app.tidemark.detect.ScrollSource
 import app.tidemark.detect.SurfaceDetector
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -67,6 +69,10 @@ class ReelService : AccessibilityService(), EngineSink {
     // Settings mirrored from DataStore / Room.
     private lateinit var pipeline: FeedPipeline<AccessibilityNodeInfo>
     private var lastProbeRequest = 0L
+    private val feed = FeedContext()
+    private var lastFeedCheck = 0L
+    private var scrollLogBudget = 0
+    private var lastScrollLog = 0L
     private var lastRejectLog = 0L
     private val lastCandidateLog = HashMap<String, Long>()
     private var consent = false
@@ -82,6 +88,7 @@ class ReelService : AccessibilityService(), EngineSink {
     // Screen state.
     private var match: SurfaceDetector.Match? = null
     private var matchPkg: String? = null
+    private var matchRule: AppRule? = null
     private var foregroundTracked: String? = null
     private var engineWantsOverlay = false
     private var hiddenUntilLeave = false
@@ -95,6 +102,7 @@ class ReelService : AccessibilityService(), EngineSink {
 
     private val tickRunnable = Runnable { tick() }
     private val probeRunnable = Runnable { probe() }
+    private val feedCheckRunnable = Runnable { matchRule?.let { checkFeed(it, now()) } }
     private val timerRunnable = object : Runnable {
         override fun run() {
             if (!::engine.isInitialized) return
@@ -237,14 +245,7 @@ class ReelService : AccessibilityService(), EngineSink {
                 if (rule == null) return
                 val m = match
                 if (m != null && matchPkg == pkg) {
-                    if (detector.isPagerScroll(event.source, m)) {
-                        val dy = if (Build.VERSION.SDK_INT >= 28) event.scrollDeltaY else 0
-                        val kind = pipeline.onPagerScroll(event.fromIndex, event.toIndex, dy, now)
-                        DiagnosticsState.update { it.copy(lastScrollAt = now, lastScrollKind = kind.name) }
-                        publishPages()
-                        // The pager reported a new adapter position: the page has changed, look now.
-                        if (kind == PageTracker.Scroll.NEW_INDEX) { scheduleProbe(0); return }
-                    }
+                    if (onScrollEvent(event, m, now)) return
                     // Smaller scrollers (comments, captions, menus) are not a swipe;
                     // the probe still checks which page is on screen.
                     scheduleProbe(PROBE_AFTER_SCROLL_MS)
@@ -259,6 +260,73 @@ class ReelService : AccessibilityService(), EngineSink {
     }
 
     override fun onInterrupt() = Unit
+
+    /**
+     * A scroll event while the video screen is up (BUG-006). Works out how its
+     * source relates to the held pager, uses it as swipe evidence only when it
+     * is tied to the pager, and records the correlation for Diagnostics.
+     * Returns true when it already scheduled an immediate probe.
+     */
+    private fun onScrollEvent(event: AccessibilityEvent, m: SurfaceDetector.Match, now: Long): Boolean {
+        val src = event.source
+        val relation = try { detector.scrollRelation(src, m) } catch (e: RuntimeException) { ScrollSource.Relation.UNRELATED }
+        val sameSize = try { detector.sameSize(src, m) } catch (e: RuntimeException) { false }
+        val dy = if (Build.VERSION.SDK_INT >= 28) event.scrollDeltaY else 0
+        val dx = if (Build.VERSION.SDK_INT >= 28) event.scrollDeltaX else 0
+        val verdict = ScrollSource.judge(relation, sameSize, horizontalOnly = dx != 0 && dy == 0)
+        val node = try { detector.describeNode(src) } catch (e: RuntimeException) { "stale node" }
+        val source = "$node · from ${event.fromIndex} to ${event.toIndex} of ${event.itemCount} · " +
+            "scrollY ${event.scrollY} · dY $dy · dX $dx"
+        val kind: PageTracker.Scroll? = when {
+            !verdict.accepted -> null
+            verdict.indexesUsable -> pipeline.onPagerScroll(event.fromIndex, event.toIndex, dy, now)
+            else -> pipeline.onPagerScroll(-1, -1, dy, now)
+        }
+        val used = kind?.name ?: "IGNORED"
+        DiagnosticsState.update {
+            it.copy(
+                scrollSource = source,
+                scrollVerdict = "${relation.label}: ${verdict.why} → $used",
+                scrollAccepted = it.scrollAccepted + if (verdict.accepted) 1 else 0,
+                scrollIgnored = it.scrollIgnored + if (verdict.accepted) 0 else 1,
+                lastScrollAt = if (verdict.accepted) now else it.lastScrollAt,
+                lastScrollKind = if (verdict.accepted) used else it.lastScrollKind,
+            )
+        }
+        if (scrollLogBudget > 0 || now - lastScrollLog >= SCROLL_LOG_MS) {
+            if (scrollLogBudget > 0) scrollLogBudget--
+            lastScrollLog = now
+            // Structure only: class, view-id entry, node id, indexes, deltas. No text.
+            DiagLog.add(this, "scroll $source; ${relation.label} → $used; pager ${detector.describeNode(m.pager)}")
+        }
+        publishPages()
+        if (kind == null) return false
+        // A new adapter position, or evidence for a page that is already up: look now.
+        if (kind == PageTracker.Scroll.NEW_INDEX || (kind.isMotion && pipeline.pages.pendingSince != null)) {
+            scheduleProbe(0)
+            return true
+        }
+        return false
+    }
+
+    /** Read the bottom navigation and decide whether swipes here count (rule countOnlyMainFeed). */
+    private fun checkFeed(rule: AppRule, now: Long) {
+        lastFeedCheck = now
+        val root = rootFor(rule.packageName) ?: return
+        val before = feed.stable
+        val items = try { detector.bottomNavItems(root) } catch (e: RuntimeException) { -1 }
+        val kind = feed.onReading(items)
+        val allowed = !rule.countOnlyMainFeed || kind == FeedContext.Kind.MAIN_FEED
+        val why = if (kind == FeedContext.Kind.UNKNOWN) "still checking whether this is the main feed"
+        else "not the main feed (video opened from search, a profile or a link)"
+        pipeline.setCountable(allowed, why)
+        DiagnosticsState.update {
+            it.copy(feedContext = "${feed.describe()} · " + if (allowed) "swipes count" else "swipes not counted")
+        }
+        if (kind != before) {
+            DiagLog.add(this, "screen in ${rule.name}: ${feed.describe()}, swipes ${if (allowed) "count" else "not counted"}")
+        }
+    }
 
     /** Rotation or a resized window: put the counter back at its (default or saved) place. */
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
@@ -462,17 +530,32 @@ class ReelService : AccessibilityService(), EngineSink {
         }
         DiagnosticsState.update { it.copy(surface = "${rule.name}: ${found.describe()}") }
         val entering = match == null || matchPkg != rule.packageName || !engine.isOnSurface
+        val replaced = !entering && match?.pager != found.pager
         match = found
         matchPkg = rule.packageName
+        matchRule = rule
         engine.onSurface(rule.packageName, rule.surface, now)
+        if (entering || replaced) {
+            // The next settled page is an arrival, not a swipe (BUG-006: no stale baseline).
+            pipeline.onEnterSurface()
+            DiagnosticsState.update {
+                it.copy(pagerNode = detector.describeNode(found.pager), pagerReplaced = it.pagerReplaced + if (replaced) 1 else 0)
+            }
+        }
         if (entering) {
-            val context = try { detector.feedContext(root, found) } catch (e: RuntimeException) { "unknown" }
-            DiagnosticsState.update { it.copy(feedContext = context) }
-            DiagLog.add(this, "surface ${rule.name}: ${found.describe()}, $context, " +
-                "app v${versionCodeOf(rule.packageName) ?: "?"}, verified=${rule.isVerified(versionCodeOf(rule.packageName))}")
+            feed.reset()
+            checkFeed(rule, now)
+            // A second reading shortly after: the verdict needs two in a row.
+            handler.removeCallbacks(feedCheckRunnable)
+            handler.postDelayed(feedCheckRunnable, FEED_SECOND_READ_MS)
+            scrollLogBudget = SCROLL_LOG_BUDGET
+            DiagLog.add(this, "surface ${rule.name}: ${found.describe()} ${detector.describeNode(found.pager)}, " +
+                "${feed.describe()}, app v${versionCodeOf(rule.packageName) ?: "?"}, " +
+                "verified=${rule.isVerified(versionCodeOf(rule.packageName))}")
             scheduleProbe(0)
             applyBlock()
         } else {
+            if (replaced) DiagLog.add(this, "pager replaced in ${rule.name}: now ${detector.describeNode(found.pager)}")
             scheduleProbe(PROBE_AFTER_SCROLL_MS)
         }
     }
@@ -497,7 +580,9 @@ class ReelService : AccessibilityService(), EngineSink {
     private fun leaveSurface(now: Long) {
         match = null
         matchPkg = null
+        matchRule = null
         handler.removeCallbacks(probeRunnable)
+        handler.removeCallbacks(feedCheckRunnable)
         engine.onOffSurface(now)
         if (block.isShown && foregroundTracked == null) block.dismiss()
     }
@@ -510,6 +595,19 @@ class ReelService : AccessibilityService(), EngineSink {
         } catch (e: RuntimeException) {
             null // node went stale mid-read
         }
+        matchRule?.let { if (now - lastFeedCheck >= FEED_CHECK_MS) checkFeed(it, now) }
+        val seen = try {
+            when (snap) {
+                null -> "nothing readable (loading)"
+                is SurfaceDetector.Snapshot.MidSwipe -> "two pages on screen"
+                is SurfaceDetector.Snapshot.Settled ->
+                    "one page: " + snap.signature.joinToString(" > ") { n -> detector.describeNode(n) } +
+                        (snap.row?.let { r -> ", row $r" } ?: "")
+            }
+        } catch (e: RuntimeException) {
+            "stale nodes"
+        }
+        DiagnosticsState.update { it.copy(lastSnapshotAt = now, lastSnapshot = seen) }
         when (snap) {
             null -> engine.onObserve(null, now) // loading: never counts
             is SurfaceDetector.Snapshot.MidSwipe -> {
@@ -522,10 +620,14 @@ class ReelService : AccessibilityService(), EngineSink {
                 if (r.changed) {
                     DiagnosticsState.update { it.copy(lastPageChangeAt = now) }
                     DiagLog.add(this, "page ${pipeline.pages.previousPosition} → ${r.position} in $appName: ${r.reason}")
-                } else if (r.reason.contains("without a swipe") && now - lastRejectLog >= REJECT_LOG_MS) {
+                } else if ((r.reason.contains("without a swipe") || r.reason.contains("no swipe evidence")) &&
+                    now - lastRejectLog >= REJECT_LOG_MS
+                ) {
                     lastRejectLog = now
+                    val p = pipeline.pages
                     DiagLog.add(this, "page not counted in $appName: ${r.reason} " +
-                        "(pager scroll events so far: ${pipeline.pages.scrollEvents}, pager: ${m.describe()})")
+                        "(pager scroll events so far: ${p.scrollEvents}, last evidence: " +
+                        "${p.lastMotionAt?.let { "${now - it} ms ago" } ?: "none"}, pager: ${detector.describeNode(m.pager)})")
                 }
                 DiagnosticsState.update { it.copy(pageDecision = r.reason) }
             }
@@ -542,6 +644,11 @@ class ReelService : AccessibilityService(), EngineSink {
                 pageChanges = p.pageChanges,
                 previousPosition = p.previousPosition,
                 position = p.position,
+                motionAt = p.lastMotionAt ?: 0L,
+                pendingSince = p.pendingSince ?: 0L,
+                tailEvents = p.tailEvents,
+                lateConfirmations = p.lateConfirmations,
+                rejectedChanges = p.rejectedChanges,
             )
         }
     }
@@ -603,6 +710,10 @@ class ReelService : AccessibilityService(), EngineSink {
         const val HEARTBEAT_MS = 5 * 60_000L
         const val CANDIDATE_LOG_MS = 30_000L
         const val PROBE_THROTTLE_MS = 250L
-        const val REJECT_LOG_MS = 10_000L
+        const val REJECT_LOG_MS = 3_000L
+        const val FEED_CHECK_MS = 1_000L
+        const val FEED_SECOND_READ_MS = 400L
+        const val SCROLL_LOG_BUDGET = 15
+        const val SCROLL_LOG_MS = 3_000L
     }
 }

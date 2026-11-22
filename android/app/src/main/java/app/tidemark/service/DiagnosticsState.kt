@@ -36,6 +36,25 @@ object DiagnosticsState {
         val lastCountAt: Long = 0L,
         /** Bottom navigation bar visible or not: tells the main feed from search/detail screens. */
         val feedContext: String? = null,
+        /** BUG-006 correlation: the last scroll event's source (class, view-id entry, node id), indexes and deltas. */
+        val scrollSource: String? = null,
+        /** How that source relates to the held pager and what the event was used for. */
+        val scrollVerdict: String? = null,
+        val scrollAccepted: Long = 0L,
+        val scrollIgnored: Long = 0L,
+        /** The held pager: class, view-id entry and node id; and how often the app replaced it. */
+        val pagerNode: String? = null,
+        val pagerReplaced: Int = 0,
+        /** The last probe of the pager: when, and what it saw. */
+        val lastSnapshotAt: Long = 0L,
+        val lastSnapshot: String? = null,
+        /** Movement evidence still in the window, or none. */
+        val motionAt: Long = 0L,
+        /** A new page seen before its swipe evidence, waiting since (0 = none). */
+        val pendingSince: Long = 0L,
+        val tailEvents: Long = 0L,
+        val lateConfirmations: Int = 0,
+        val rejectedChanges: Int = 0,
     )
 
     private val _state = MutableStateFlow(Snapshot())
