@@ -66,6 +66,7 @@ class ReelService : AccessibilityService(), EngineSink {
     // Settings mirrored from DataStore / Room.
     private lateinit var pipeline: FeedPipeline<AccessibilityNodeInfo>
     private var lastProbeRequest = 0L
+    private var lastRejectLog = 0L
     private val lastCandidateLog = HashMap<String, Long>()
     private var consent = false
     private var pausedUntil = 0L
@@ -222,7 +223,7 @@ class ReelService : AccessibilityService(), EngineSink {
                     // often enough to see a swipe in progress.
                     if (now - lastProbeRequest < PROBE_THROTTLE_MS) return
                     lastProbeRequest = now
-                    if (stillVisible(m)) scheduleProbe(0) else evaluate(rule, now)
+                    if (keepMatch(m, pkg)) scheduleProbe(0) else evaluate(rule, now)
                 } else {
                     // Playing videos change content constantly, so the full walk is throttled.
                     if (now - lastContentCheck < CONTENT_THROTTLE_MS) return
@@ -427,6 +428,15 @@ class ReelService : AccessibilityService(), EngineSink {
     }
 
     private fun evaluate(rule: AppRule, now: Long) {
+        // Keep the pager we already have while it is still on screen in the same
+        // window. Re-running find() mid-swipe would fail (no page fills the screen
+        // while two are half visible), drop the surface and lose the swipe.
+        val current = match
+        if (current != null && matchPkg == rule.packageName && engine.isOnSurface && keepMatch(current, rule.packageName)) {
+            engine.onSurface(rule.packageName, rule.surface, now)
+            scheduleProbe(PROBE_AFTER_SCROLL_MS)
+            return
+        }
         val root = rootFor(rule.packageName)
         if (root == null) {
             DiagnosticsState.update { it.copy(surface = "${rule.name}: window not readable") }
@@ -460,6 +470,17 @@ class ReelService : AccessibilityService(), EngineSink {
         }
     }
 
+    /**
+     * The matched pager is still the one on screen: visible, and in the app's
+     * current window (a new activity such as a profile or settings page has a
+     * different window id).
+     */
+    private fun keepMatch(m: SurfaceDetector.Match, pkg: String): Boolean = try {
+        stillVisible(m) && rootFor(pkg)?.windowId == m.pager.windowId
+    } catch (e: RuntimeException) {
+        false
+    }
+
     private fun stillVisible(m: SurfaceDetector.Match): Boolean = try {
         m.pager.refresh() && m.pager.isVisibleToUser
     } catch (e: RuntimeException) {
@@ -490,8 +511,14 @@ class ReelService : AccessibilityService(), EngineSink {
             }
             is SurfaceDetector.Snapshot.Settled -> {
                 val r = pipeline.onSettledPage(snap.signature, snap.row, now)
-                if (r.changed) DiagLog.add(this, "page ${pipeline.pages.previousPosition} → ${r.position} in " +
-                    "${matchPkg?.let { appNames[it] } ?: "?"}: ${r.reason}")
+                val appName = matchPkg?.let { appNames[it] } ?: "?"
+                if (r.changed) {
+                    DiagLog.add(this, "page ${pipeline.pages.previousPosition} → ${r.position} in $appName: ${r.reason}")
+                } else if (r.reason.contains("without a swipe") && now - lastRejectLog >= REJECT_LOG_MS) {
+                    lastRejectLog = now
+                    DiagLog.add(this, "page not counted in $appName: ${r.reason} " +
+                        "(pager scroll events so far: ${pipeline.pages.scrollEvents}, pager: ${m.describe()})")
+                }
                 DiagnosticsState.update { it.copy(pageDecision = r.reason) }
             }
         }
@@ -568,5 +595,6 @@ class ReelService : AccessibilityService(), EngineSink {
         const val HEARTBEAT_MS = 5 * 60_000L
         const val CANDIDATE_LOG_MS = 30_000L
         const val PROBE_THROTTLE_MS = 250L
+        const val REJECT_LOG_MS = 10_000L
     }
 }

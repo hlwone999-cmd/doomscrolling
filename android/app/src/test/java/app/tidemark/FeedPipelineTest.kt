@@ -158,6 +158,16 @@ class FeedPipelineTest {
         assertEquals(listOf("p:0"), sink.counted)
     }
 
+    @Test fun wrapperOnTopStillCountsEachSwipe() {
+        // The held container is a wrapper: its top levels never change; the page changes deeper down.
+        feed.onSettledPage(listOf("Wrap", "Pager", "Page0"), null, now); advance(500)
+        for (i in 1..5) {
+            feed.onPagerScroll(-1, -1, 900, now); advance(150)
+            feed.onSettledPage(listOf("Wrap", "Pager", "Page$i"), null, now); advance(500)
+        }
+        assertEquals((0..5).map { "p:$it" }, sink.counted)
+    }
+
     @Test fun leavingTheFeedEndsTheSessionAndHidesTheOverlay() {
         settle("A")
         assertTrue(sink.overlay)

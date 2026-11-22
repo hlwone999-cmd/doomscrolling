@@ -48,19 +48,24 @@ class SurfaceDetector {
     fun find(root: AccessibilityNodeInfo, rule: AppRule): Match? {
         val window = Rect().also { root.getBoundsInScreen(it) }
         if (window.isEmpty) return null
+        var hinted: Match? = null
         var best: Match? = null
-        walk(root, MAX_NODES) { node, bounds ->
+        var bestScore = Int.MIN_VALUE
+        walk(root, MAX_NODES) { node, bounds, depth ->
             if (!fillsWindow(bounds, window)) return@walk true
             val hint = rule.hintMatches(node.viewIdResourceName)
             if (!hint && !rule.genericFallback) return@walk true
             if (!isPagerLike(node) || isHorizontalOnly(node)) return@walk true
             if (!hasFullPageChild(node)) return@walk true
             val m = Match(node, bounds, hint, node.className?.toString() ?: "?", node.viewIdResourceName)
-            if (hint) { best = m; return@walk false } // stop: hinted structural match
-            if (best == null) best = m               // keep the outermost structural match
+            if (hint && hinted == null) hinted = m
+            // Prefer the innermost pager, and one holding several pages (current + preloaded
+            // neighbours) over a wrapper with a single full-size child.
+            val score = depth * 10 + (if (listNode(node).childCount >= 2) 100 else 0)
+            if (score > bestScore) { bestScore = score; best = m }
             true
         }
-        return best
+        return hinted ?: best
     }
 
     /** True when a scroll event came from the pager or a container of the same size. */
@@ -97,16 +102,26 @@ class SurfaceDetector {
             return if (two.size >= 2) Snapshot.MidSwipe(two.first().first, two.last().first) else null
         }
         val page = best.first
+        // Chain of full-screen containers under the page (up to 4 levels): if the
+        // pager we hold is a wrapper, the real page change shows up further down.
         val signature = mutableListOf(page)
-        val pb = Rect().also { page.getBoundsInScreen(it) }
-        var inner: AccessibilityNodeInfo? = null
-        var innerH = 0
-        for (i in 0 until page.childCount) {
-            val c = page.getChild(i) ?: continue
-            c.getBoundsInScreen(r)
-            if (r.height() > innerH) { innerH = r.height(); inner = c }
+        var level = page
+        repeat(SIGNATURE_DEPTH - 1) {
+            val lvb = Rect().also { level.getBoundsInScreen(it) }
+            if (lvb.height() <= 0) return@repeat
+            var inner: AccessibilityNodeInfo? = null
+            var innerH = 0
+            for (i in 0 until level.childCount) {
+                val c = level.getChild(i) ?: continue
+                c.getBoundsInScreen(r)
+                if (!r.intersect(lvb)) continue
+                if (r.height() > innerH) { innerH = r.height(); inner = c }
+            }
+            val next = inner ?: return@repeat
+            if (innerH < lvb.height() * 0.85f) return@repeat
+            signature += next
+            level = next
         }
-        if (inner != null && pb.height() > 0 && innerH >= pb.height() * 0.85f) signature += inner
         val row = page.collectionItemInfo?.rowIndex?.takeIf { it >= 0 }
         return Snapshot.Settled(signature, row)
     }
@@ -120,7 +135,7 @@ class SurfaceDetector {
         val window = Rect().also { root.getBoundsInScreen(it) }
         if (window.isEmpty) return "window has no bounds"
         val rows = mutableListOf<Pair<Int, String>>()
-        walk(root, MAX_NODES) { node, b ->
+        walk(root, MAX_NODES) { node, b, _ ->
             if (b.height() < window.height() * 0.5f || node.childCount == 0) return@walk true
             val area = b.width() * b.height()
             val dirs = buildString {
@@ -144,7 +159,7 @@ class SurfaceDetector {
     // ---- structure helpers ----
 
     /** Breadth-first walk over visible nodes; [visit] returns false to stop. */
-    private inline fun walk(root: AccessibilityNodeInfo, limit: Int, visit: (AccessibilityNodeInfo, Rect) -> Boolean) {
+    private inline fun walk(root: AccessibilityNodeInfo, limit: Int, visit: (AccessibilityNodeInfo, Rect, Int) -> Boolean) {
         val queue = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>()
         queue.addLast(root to 0)
         var visited = 0
@@ -153,7 +168,7 @@ class SurfaceDetector {
             visited++
             if (!node.isVisibleToUser) continue
             val b = Rect().also { node.getBoundsInScreen(it) }
-            if (!visit(node, b)) return
+            if (!visit(node, b, depth)) return
             if (depth < MAX_DEPTH) {
                 for (i in 0 until node.childCount) node.getChild(i)?.let { queue.addLast(it to depth + 1) }
             }
@@ -230,5 +245,6 @@ class SurfaceDetector {
     private companion object {
         const val MAX_NODES = 800
         const val MAX_DEPTH = 35
+        const val SIGNATURE_DEPTH = 4
     }
 }
