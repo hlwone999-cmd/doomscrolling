@@ -117,3 +117,18 @@ What this proves:
 - A debug APK is produced with no INTERNET permission.
 
 What it does not prove: anything on a device. Detection, the overlays, the instrumented tests (manual emulator job, not run yet) and the 50 device cases are all still pending.
+
+## Round 5: sample data removed, detection reworked (2026-11-21)
+
+Trigger: device report (Realme): the dashboard showed 88 sample videos and nothing counted. See BUG-002.
+
+| run | commit | result |
+| --- | --- | --- |
+| 44968870448 | ae47e34 | **success**: Python checks, compile, JVM unit tests (now including PositionTrackerTest), debug APK (11.4 MB), no INTERNET permission |
+
+**Next, on the phone.** Install the APK from run 44968870448, then:
+1. Open Settings → Diagnostics.
+2. Scroll Reels, Shorts and TikTok.
+3. Share the Diagnostics log.
+
+The log contains only structure (class names, view-id entries, sizes, scroll directions). It is what tunes detection for that phone.

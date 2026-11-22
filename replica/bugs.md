@@ -8,13 +8,42 @@ id; each one names the files changed.
 
 | severity | open | fixed |
 | --- | --- | --- |
-| S1 | 0 | 0 |
+| S1 | 0 | 1 (BUG-002, fixed in code; device check pending) |
 | S2 | 0 | 0 |
 | S3 | 0 | 0 |
 | S4 | 0 | 1 |
 
 Round 2 (full feature set): no new bug reproduced. Two "to check" items
 were resolved in code (C-6, C-7); four new ones need a phone (C-10 to C-13).
+
+### BUG-002: Dashboard showed sample data (88 = 42 + 29 + 17) and nothing counted on a Realme phone
+
+- Severity: S1 (core flow blocked, statistics not real)
+- Flow / case: F02-H1, F03-E1
+- Build: 0.1.0 debug APK from run 44965884111; device: Realme (user report, 2026-11-21)
+
+Steps
+1. Install the APK, accept the disclosure, enable the accessibility service.
+2. Open Instagram Reels and scroll.
+
+Expected: Today starts at 0 and rises with each video.
+Actual: Today showed 88 videos (Instagram 42, TikTok 29, YouTube 17) and the count did not rise.
+
+Diagnosis (source)
+- **Sample data.** The numbers came from `DemoData.insertToday()`, which only the developer screen's "Insert demo data" button called. It wrote real rows (`rules_version` 0, keys `i:demo-…`), so the correct Room queries showed them.
+- **No counting.** Short-video screens were found either by guessed exact view ids or by a narrow generic test: the container had to be a RecyclerView/ViewPager *and* expose its scroll direction. Custom pagers fail that test, so the screen is likely never recognised.
+- **Caption hash.** The fallback video key hashed caption text, which goes against the no-text requirement.
+- **Scroll gate.** Counting after the first video needed a scroll event from the pager itself, so a pager that sends none would count at most one video per session.
+
+Fix (ae47e34)
+- DemoData and its button are removed. On start, the app purges sample sessions and rebuilds daily totals from real data (sql DB-18/19).
+- Structural detection: the container fills the window, is pager-like and not horizontal-only, and its current child fills ≥ 95 %. Id hints only raise priority.
+- Text-free keys: adapter row, or a position from container identity (`PositionTracker`, JVM-tested).
+- A structurally confirmed page change counts as a swipe.
+- `getWindows()` fallback for reading the app window.
+- Live diagnostics plus a structural candidate log.
+
+Status: **fixed in code, built** (run 44968870448: compile, JVM tests and APK pass). **Detection is not yet verified on the phone.**
 
 ### BUG-001: Day rollover during the grace period records the wrong end time
 
