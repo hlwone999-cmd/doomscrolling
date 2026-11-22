@@ -103,6 +103,23 @@ jobs:
             exit 1
           fi
 
+      - name: Unit test summary (per class, public annotation)
+        if: always()
+        run: |
+          python3 - <<'EOF'
+          import glob, xml.etree.ElementTree as ET
+          rows, tot = [], [0, 0, 0, 0]
+          for f in sorted(glob.glob("app/build/test-results/testDebugUnitTest/*.xml")):
+              r = ET.parse(f).getroot()
+              t, fa, er, sk = (int(r.get(k, 0)) for k in ("tests", "failures", "errors", "skipped"))
+              rows.append("%s: %d tests, %d failed, %d errors, %d skipped" % (r.get("name").split(".")[-1], t, fa, er, sk))
+              tot = [a + b for a, b in zip(tot, (t, fa, er, sk))]
+          head = "JVM unit tests: %d run, %d failed, %d errors, %d skipped" % tuple(tot)
+          print(head); print("
+".join(rows))
+          print("::notice title=" + head + "::" + "%0A".join(rows))
+          EOF
+
       - name: Build debug APK
         run: |
           set -o pipefail
