@@ -140,3 +140,14 @@ The log contains only structure (class names, view-id entries, sizes, scroll dir
 | 44970583305 | 00383ec | **success**: Python checks (engine port now 44 checks including the feed scenarios), compile, JVM unit tests (FeedPipelineTest, PageTrackerTest added), debug APK 11.4 MB, no INTERNET permission |
 
 See BUG-003. Device verification on TikTok, Reels and Shorts is still pending.
+
+## Round 7: database writes fixed (BUG-004) and prompt counting (BUG-005) (2026-11-21)
+
+| run | commit | result |
+| --- | --- | --- |
+| 44972711399 | b5b2e46 | success: BUG-004 trigger fix + RoomDatabaseTest (Robolectric) |
+| 44973… (#12) | 09869cc | failed: invalid workflow YAML from my own edit (stray line break); fixed in 33f44f4 |
+| #13 | 33f44f4 | success: public per-class test summary added to CI |
+| 44976396186 | d29108e | **success: 80 JVM tests, 0 failed** (CoreTest 5, CountingEngineTest 21, FeedPipelineTest 15, LogicTest 12, PageTrackerTest 10, PositionTrackerTest 8, RoomDatabaseTest 9); debug APK 11.4 MB, no INTERNET |
+
+Device verification of BUG-003/004/005 on the Realme is still pending.

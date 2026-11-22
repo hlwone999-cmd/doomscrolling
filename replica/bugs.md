@@ -9,7 +9,7 @@ id; each one names the files changed.
 | severity | open | fixed |
 | --- | --- | --- |
 | S1 | 0 | 2 (BUG-002, BUG-003: fixed in code; device check pending) |
-| S2 | 0 | 0 |
+| S2 | 0 | 1 (BUG-005: fixed in code; device check pending) |
 | S3 | 0 | 0 |
 | S4 | 0 | 1 |
 
