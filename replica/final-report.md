@@ -2,7 +2,7 @@
 
 Date: 2026-11-21. Scope: the whole project after rounds 1-3 (build, full feature set, branding).
 
-**In one line:** all 52 in-scope features are written and 173 logic, data and static checks pass. The app has **never been compiled, built or run**, and short-video detection is **unverified**.
+**In one line:** all 52 in-scope features are written and 173 logic, data and static checks pass. **Update (round 4):** GitHub Actions compiled the app, the JVM unit tests passed and a debug APK was built (run 44965546782, artifact `tidemark-debug-apk`). The app has **not been run on a phone**, and short-video detection is **unverified**.
 
 ---
 

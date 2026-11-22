@@ -100,3 +100,20 @@ Still **not compiled and not run**. No change to core behaviour. Details in `bra
 - Gradle: namespace and applicationId are `app.tidemark`; rootProject is "Tidemark"; compileSdk 35, minSdk 26, targetSdk 35.
 - **Gradle wrapper missing.** There is no `gradlew` and no `gradle-wrapper.jar`, only `gradle-wrapper.properties` (8.9). Android Studio offers to create them; the CI workflow installs Gradle itself.
 - CI: `.github/workflows/main.yml` is written but has never run.
+
+## Round 4: first real build in GitHub Actions (2026-11-21)
+
+Repository: https://github.com/hlwone999-cmd/doomscrolling (branch `main`). Workflow: `.github/workflows/main.yml`.
+
+| run | commit | result | cause / fix |
+| --- | --- | --- | --- |
+| 44965044126 | c7ec3e8 | failed at "Set up Android SDK" | third-party `android-actions/setup-android@v3` failed (log needs sign-in). Replaced with the runner's own `sdkmanager` (platform 35, build-tools 34.0.0) in 90faf5a |
+| 44965271578 | 90faf5a | failed at compile | one Kotlin error: `Unresolved reference 'heading'` in `Controls.kt` (fully qualified extension call). Fixed in e690a21 |
+| 44965546782 | e690a21 | **success** | Python checks pass; `testDebugUnitTest` passes; `assembleDebug` passes; APK has no INTERNET permission; artifact `tidemark-debug-apk` (11.4 MB, kept 14 days) uploaded |
+
+What this proves:
+- The project **compiles** (main + unit-test source sets).
+- The 36 JVM unit tests ran without a failure (Gradle fails the task on any failing test).
+- A debug APK is produced with no INTERNET permission.
+
+What it does not prove: anything on a device. Detection, the overlays, the instrumented tests (manual emulator job, not run yet) and the 50 device cases are all still pending.

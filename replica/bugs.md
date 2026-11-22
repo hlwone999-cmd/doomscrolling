@@ -38,7 +38,7 @@ Status: **fixed.** `detect/CountingEngine.kt` now closes at `leftAt` when off-su
 
 | # | suspicion | why | how to check |
 | --- | --- | --- | --- |
-| C-1 | Code may not compile on first open | written without a compiler; risky spots: `PathParser` icon builder, `LifecycleResumeEffect`, Room KSP setup | Android Studio build |
+| ~~C-1~~ | **Resolved:** code did not compile on first open | first CI compile (run 44965271578) found one error: `heading()` called fully qualified in `Controls.kt`; fixed in e690a21. Run 44965546782 compiled, passed `testDebugUnitTest` and built the APK | done |
 | C-2 | Instagram/YouTube pager ids are guesses | `clips_viewer_view_pager`, `reel_recycler` not seen on a device | `uiautomator dump` on Reels/Shorts |
 | C-3 | Generic fallback may count Instagram main-feed video posts | relies on feed items being < 90% of the pager height | F02-E13 |
 | C-4 | Fingerprint may drift while a video plays (captions that change, translated text) | stability filter only drops digits and short labels | watch one video 60 s with no scroll: count must stay 1 (rule 4 should hold) |
