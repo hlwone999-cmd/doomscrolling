@@ -110,17 +110,19 @@ Q = queries()
 
 
 def open_session(db, pkg="com.instagram.android", day="2026-11-21", at=1000, is_open=1):
+    # Exactly what Room generates for SessionDao.insert (@Insert, default strategy ABORT).
     cur = db.execute(
-        "INSERT INTO session (package, surface_kind, day_key, tz_offset_min, started_at, last_event_at, ended_at,"
-        " reel_count, active_ms, ended_reason, rules_version, target_version_code, is_open, created_at, updated_at)"
-        " VALUES (?, 'reels', ?, 420, ?, ?, NULL, 0, 0, NULL, 1, NULL, ?, ?, ?)",
-        (pkg, day, at, at, is_open, at, at))
+        "INSERT OR ABORT INTO `session` (`id`,`package`,`surface_kind`,`day_key`,`tz_offset_min`,`started_at`,"
+        "`last_event_at`,`ended_at`,`reel_count`,`active_ms`,`ended_reason`,`rules_version`,`target_version_code`,"
+        "`is_open`,`created_at`,`updated_at`) VALUES (nullif(?, 0),?,'reels',?,420,?,?,NULL,0,0,NULL,1,NULL,?,?,?)",
+        (0, pkg, day, at, at, is_open, at, at))
     return cur.lastrowid
 
 
 def count(db, sid, key, at):
-    cur = db.execute("INSERT OR IGNORE INTO reel_event (session_id, at, item_key, dwell_ms) VALUES (?, ?, ?, 400)",
-                     (sid, at, key))
+    # Exactly what Room generates for ReelEventDao.insert (@Insert(onConflict = IGNORE)).
+    cur = db.execute("INSERT OR IGNORE INTO `reel_event` (`id`,`session_id`,`at`,`item_key`,`dwell_ms`) "
+                     "VALUES (nullif(?, 0),?,?,?,400)", (0, sid, at, key))
     return cur.rowcount == 1
 
 
@@ -350,6 +352,61 @@ def main():
     db.execute(Q["DemoPurgeDao.dropEmptyDays"])
     check("totalFor today = 0", db.execute(Q["totalFor"], {"dayKey": "2026-11-21"}).fetchone()[0] == 0)
     check("no daily rows left", db.execute("SELECT COUNT(*) FROM daily_stat").fetchone()[0] == 0)
+
+    print("DB-20 Room's own INSERT OR ABORT: several sessions on the same day and app")
+    check("no trigger relies on a conflict clause (Room's OR ABORT would override it)",
+          all(" OR IGNORE " not in t.upper() and " OR REPLACE " not in t.upper() for t in triggers()))
+    db = fresh()
+    ids = []
+    for k in range(5):
+        sid = open_session(db, at=1000 + k * 10_000)
+        count(db, sid, "p:0", 1001 + k * 10_000)
+        db.execute(Q["close"], {"id": sid, "endedAt": 5000 + k * 10_000, "reason": "left_surface",
+                                "activeMs": 4000, "now": 5000 + k * 10_000})
+        ids.append(sid)
+    check("five sessions opened on the same day", ids == [1, 2, 3, 4, 5], ids)
+    check("daily_stat: 5 sessions, 5 videos, 20 s", stat(db) == (5, 20_000, 5), stat(db))
+
+    print("DB-21 regression: the old triggers abort the 2nd session; replacing them fixes the same database")
+    old_open = """CREATE TRIGGER session_open_rollup AFTER INSERT ON session
+               BEGIN
+                 INSERT OR IGNORE INTO daily_stat (day_key, package, reels, active_ms, sessions, updated_at)
+                   VALUES (NEW.day_key, NEW.package, 0, 0, 0, NEW.started_at);
+                 UPDATE daily_stat SET sessions = sessions + 1, updated_at = NEW.started_at
+                  WHERE day_key = NEW.day_key AND package = NEW.package;
+               END"""
+    db = fresh()
+    db.execute("DROP TRIGGER session_open_rollup")
+    db.execute(old_open)
+    s1 = open_session(db, at=1000)
+    db.execute(Q["close"], {"id": s1, "endedAt": 2000, "reason": "left_surface", "activeMs": 1000, "now": 2000})
+    try:
+        open_session(db, at=3000)
+        check("old trigger reproduces the device error", False, "second open succeeded")
+    except sqlite3.IntegrityError as e:
+        check("old trigger reproduces the device error (%s)" % e, "daily_stat" in str(e), e)
+    # installTriggers(): drop + create, data untouched
+    for name in ("reel_event_rollup", "session_open_rollup", "session_close_rollup"):
+        db.execute("DROP TRIGGER IF EXISTS %s" % name)
+    for t in triggers():
+        db.execute(t)
+    s2 = open_session(db, at=3000)
+    check("after replacing the triggers the second session opens", s2 == 2, s2)
+    check("existing data kept (1 earlier session counted)", stat(db)[2] == 2, stat(db))
+
+    print("DB-22 a failed write leaves the database consistent (transaction rolls back)")
+    db = fresh()
+    sid = open_session(db, at=1000)
+    count(db, sid, "p:0", 1001)
+    before = (stat(db), db.execute("SELECT reel_count FROM session").fetchone()[0])
+    try:
+        # A video for a session that does not exist: the foreign key fails, nothing may change.
+        db.execute("INSERT OR IGNORE INTO reel_event (session_id, at, item_key, dwell_ms) VALUES (999, 2000, 'p:1', 400)")
+        check("orphan event rejected", False, "inserted")
+    except sqlite3.IntegrityError:
+        check("orphan event rejected by the foreign key", True)
+    after = (stat(db), db.execute("SELECT reel_count FROM session").fetchone()[0])
+    check("totals unchanged after the failed write", before == after, (before, after))
 
     print()
     print("%d failing" % len(FAILS))

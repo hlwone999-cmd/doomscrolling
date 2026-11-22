@@ -33,7 +33,11 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
-    testOptions { unitTests.isReturnDefaultValues = true }
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+        // Robolectric runs the real Room database (entities, DAOs, triggers) in JVM tests.
+        unitTests.isIncludeAndroidResources = true
+    }
 }
 
 ksp {
@@ -60,6 +64,9 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.androidx.test.ext.junit)
 
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)

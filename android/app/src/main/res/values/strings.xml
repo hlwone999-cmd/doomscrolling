@@ -306,11 +306,16 @@
     <string name="diag_surface">Detected short-video screen</string>
     <string name="diag_last_reason">Last counting decision</string>
     <string name="diag_counted_since">Videos counted since the service connected</string>
-    <string name="diag_total_real">Total videos counted (database)</string>
+    <string name="diag_total_real">Persisted in the database (all time)</string>
     <string name="diag_none">none yet</string>
     <string name="diag_live_note">Open Reels, Shorts or TikTok, scroll a few videos, then come back here. Only technical details are shown: app names, event types and screen structure, never what is on screen.</string>
     <string name="diag_scroll_events">Pager scroll events received</string>
     <string name="diag_page_changes">Page changes detected</string>
     <string name="diag_positions">Video position: previous → current</string>
     <string name="diag_page_decision">Last page decision</string>
+    <string name="diag_write_accepted">Accepted in memory (sent to the database)</string>
+    <string name="diag_write_success">Write success</string>
+    <string name="diag_write_duplicates">Duplicates ignored (already stored)</string>
+    <string name="diag_write_failures">Write failures</string>
+    <string name="diag_write_last_error">Last write error</string>
 </resources>

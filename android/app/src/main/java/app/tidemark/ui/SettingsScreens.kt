@@ -519,6 +519,7 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
         // Live status from the running service (memory only, technical metadata).
         val live by DiagnosticsState.state.collectAsStateWithLifecycle()
         val realTotal by graph.db.reelEvents().countAll().collectAsStateWithLifecycle(0)
+        val writes by graph.writer.stats.collectAsStateWithLifecycle()
         val none = stringResource(R.string.diag_none)
         SectionTitle(stringResource(R.string.diag_live))
         AppCard(Modifier.fillMaxWidth()) {
@@ -538,6 +539,11 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                     "${live.previousPosition?.toString() ?: "–"} → ${live.position}")
                 DiagLine(stringResource(R.string.diag_page_decision), live.pageDecision ?: none)
                 DiagLine(stringResource(R.string.diag_counted_since), live.countedSinceConnect.toString())
+                DiagLine(stringResource(R.string.diag_write_accepted), writes.accepted.toString())
+                DiagLine(stringResource(R.string.diag_write_success), writes.written.toString())
+                DiagLine(stringResource(R.string.diag_write_duplicates), writes.duplicates.toString())
+                DiagLine(stringResource(R.string.diag_write_failures), writes.failures.toString(), warn = writes.failures > 0)
+                writes.lastError?.let { DiagLine(stringResource(R.string.diag_write_last_error), it, warn = true) }
                 DiagLine(stringResource(R.string.diag_total_real), realTotal.toString())
                 Text(stringResource(R.string.diag_live_note), style = AppType.bodySm, color = c.textMuted)
             }

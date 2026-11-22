@@ -297,11 +297,16 @@
     <string name="diag_surface">Layar video pendek yang terdeteksi</string>
     <string name="diag_last_reason">Keputusan hitung terakhir</string>
     <string name="diag_counted_since">Video terhitung sejak layanan terhubung</string>
-    <string name="diag_total_real">Total video terhitung (database)</string>
+    <string name="diag_total_real">Tersimpan di database (sepanjang waktu)</string>
     <string name="diag_none">belum ada</string>
     <string name="diag_live_note">Buka Reels, Shorts, atau TikTok, scroll beberapa video, lalu kembali ke sini. Yang ditampilkan hanya detail teknis: nama aplikasi, jenis peristiwa, dan struktur layar, bukan isi layar.</string>
     <string name="diag_scroll_events">Peristiwa scroll pager diterima</string>
     <string name="diag_page_changes">Perpindahan halaman terdeteksi</string>
     <string name="diag_positions">Posisi video: sebelumnya → sekarang</string>
     <string name="diag_page_decision">Keputusan halaman terakhir</string>
+    <string name="diag_write_accepted">Diterima di memori (dikirim ke database)</string>
+    <string name="diag_write_success">Berhasil ditulis</string>
+    <string name="diag_write_duplicates">Duplikat diabaikan (sudah tersimpan)</string>
+    <string name="diag_write_failures">Gagal ditulis</string>
+    <string name="diag_write_last_error">Kesalahan tulis terakhir</string>
 </resources>

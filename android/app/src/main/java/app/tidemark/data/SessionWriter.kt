@@ -62,6 +62,21 @@ class SessionWriter(
     private val snoozedUntil = HashMap<Long, Long>()
     private var lastWidgetAt = 0L
 
+    /** Write-path counters for Settings > Diagnostics (this process only). */
+    data class WriteStats(
+        val accepted: Int = 0,      // videos the engine approved and sent to the writer
+        val written: Int = 0,       // stored (a new reel_event row)
+        val duplicates: Int = 0,    // already stored for that session (ignored, not an error)
+        val failures: Int = 0,      // writes that threw (any command)
+        val lastError: String? = null,
+    )
+
+    private val _stats = MutableStateFlow(WriteStats())
+    val stats: StateFlow<WriteStats> = _stats
+
+    private val debuggable =
+        (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+
     private val _todayTotal = MutableStateFlow(0)
     private val _blocking = MutableStateFlow<List<GoalDecision>>(emptyList())
     private val _reelsGoal = MutableStateFlow<GoalRow?>(null)
@@ -81,9 +96,12 @@ class SessionWriter(
                 try {
                     handle(cmd)
                 } catch (e: Exception) {
-                    // Never let one bad write stop counting. Logged locally only.
-                    Log.w(TAG, "write failed: ${cmd::class.simpleName}", e)
-                    DiagLog.add(context, "write failed: ${cmd::class.simpleName}: ${e.javaClass.simpleName}")
+                    // Never let one bad write stop counting, but never hide it either:
+                    // the full SQLite message, code, table and (debug builds) a short trace.
+                    val detail = describeFailure(cmd::class.simpleName ?: "?", e)
+                    Log.w(TAG, detail, e)
+                    DiagLog.add(context, detail)
+                    _stats.value = _stats.value.copy(failures = _stats.value.failures + 1, lastError = detail)
                     when (cmd) {
                         is Cmd.Snooze -> cmd.done.complete(false)
                         is Cmd.DeleteDays -> cmd.done.complete(Unit)
@@ -139,10 +157,30 @@ class SessionWriter(
                 evaluateGoals(cmd.at)
             }
             is Cmd.Count -> {
-                val id = rowIds[cmd.token] ?: ensureRow(cmd.token, cmd.at) ?: return
-                val inserted = db.reelEvents().insert(
-                    ReelEventRow(sessionId = id, at = cmd.at, itemKey = cmd.itemKey, dwellMs = cmd.dwellMs)
-                )
+                _stats.value = _stats.value.copy(accepted = _stats.value.accepted + 1)
+                val id = rowIds[cmd.token] ?: ensureRow(cmd.token, cmd.at) ?: run {
+                    _stats.value = _stats.value.copy(failures = _stats.value.failures + 1,
+                        lastError = "Count: no session for token ${cmd.token} (session was never opened)")
+                    DiagLog.add(context, "write failed: Count: no session for token ${cmd.token}")
+                    return
+                }
+                val event = ReelEventRow(sessionId = id, at = cmd.at, itemKey = cmd.itemKey, dwellMs = cmd.dwellMs)
+                val inserted = try {
+                    db.reelEvents().insert(event)
+                } catch (e: SQLiteConstraintException) {
+                    // The session row is gone (deleted by the user, or never written): open a
+                    // fresh row for this token and retry once. The (session_id, item_key) unique
+                    // index still guarantees one row per video.
+                    DiagLog.add(context, describeFailure("Count (will retry once)", e))
+                    rowIds.remove(cmd.token)
+                    val retryId = ensureRow(cmd.token, cmd.at) ?: throw e
+                    db.reelEvents().insert(event.copy(sessionId = retryId))
+                }
+                if (inserted == -1L) {
+                    _stats.value = _stats.value.copy(duplicates = _stats.value.duplicates + 1)
+                } else {
+                    _stats.value = _stats.value.copy(written = _stats.value.written + 1)
+                }
                 if (inserted != -1L) {
                     refreshTotal(cmd.at)
                     evaluateGoals(cmd.at)
@@ -266,12 +304,37 @@ class SessionWriter(
         val id = try {
             db.sessions().insert(row)
         } catch (e: SQLiteConstraintException) {
-            // A session survived a crash: close it, then open ours.
+            if (e.message?.contains("session.is_open") != true) throw e // not recoverable here: report it
+            // A session survived a crash (another row still has is_open = 1): close it, then open ours.
+            DiagLog.add(context, "Open: closing a session left open by an earlier run, then retrying")
             db.sessions().closeDangling(at)
             db.sessions().insert(row)
         }
         rowIds[token] = id
         return id
+    }
+
+    /**
+     * One log line for a failed write: operation, exception class, SQLite's own
+     * message (it names the constraint, table and columns, e.g. "UNIQUE constraint
+     * failed: daily_stat.day_key, daily_stat.package (code 2067 ...)"), the
+     * extended error code when present and, in debug builds, the top stack frames.
+     * Database metadata only; no screen content exists in this path.
+     */
+    private fun describeFailure(op: String, e: Throwable): String {
+        val msg = e.message?.replace('\n', ' ')?.take(300) ?: "(no message)"
+        val code = Regex("""code (\d+)""").find(msg)?.groupValues?.get(1)
+        val table = Regex("""failed: (\w+)\.""").find(msg)?.groupValues?.get(1)
+        val sb = StringBuilder("write failed: ").append(op).append(": ").append(e.javaClass.simpleName)
+            .append(": ").append(msg)
+        if (code != null) sb.append(" [sqlite code ").append(code).append(']')
+        if (table != null) sb.append(" [table ").append(table).append(']')
+        if (debuggable) {
+            sb.append(" at ").append(
+                e.stackTrace.take(5).joinToString(" < ") { "${it.className.substringAfterLast('.')}.${it.methodName}:${it.lineNumber}" }
+            )
+        }
+        return sb.toString()
     }
 
     private suspend fun refreshTotal(now: Long) {
