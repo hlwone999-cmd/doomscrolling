@@ -1,0 +1,63 @@
+feature,area,priority,original,clone,notes
+In-app prominent accessibility disclosure with affirmative consent,onboarding,must,yes,partial,code complete; not compiled or device-tested; S02 EN+ID; UI test written
+App usable with tracking off if disclosure declined,onboarding,must,unknown,partial,"code complete; not compiled or device-tested; decline path, Today banner, re-open from Settings"
+Guided permission setup (accessibility + notifications + battery),onboarding,must,yes,partial,code complete; not compiled or device-tested; S03 with live status; battery list (no restricted permission)
+OEM battery and autostart tips during onboarding,onboarding,must,unknown,partial,"code complete; not compiled or device-tested; S03 and S16 by manufacturer (Xiaomi, Samsung, Oppo/realme/OnePlus, vivo, Huawei/Honor)"
+Choose which apps to track,onboarding,must,yes,partial,"code complete; not compiled or device-tested; S04 switches, installed/verified status; service honours it"
+Detect foreground tracked app,detection,must,yes,partial,code complete; not compiled or device-tested
+Detect Instagram Reels screen (vs feed/DMs/search),detection,must,yes,partial,code complete; detection UNVERIFIED until the device test protocol passes; view id is a guess + generic vertical-pager fallback
+Count Instagram Reels one per settled video,detection,must,yes,partial,code complete; detection UNVERIFIED until the device test protocol passes; engine rules covered by JVM tests and Python fuzz
+Detect and count YouTube Shorts,detection,must,yes,partial,code complete; detection UNVERIFIED until the device test protocol passes; view id is a guess + fallback
+Detect and count TikTok For You / Following,detection,must,no,partial,"code complete; detection UNVERIFIED until the device test protocol passes; generic fallback only, both package names"
+Video change detection with dedupe (no recount on UI change or duplicate events),detection,must,unknown,partial,code complete; not compiled or device-tested; scroll gate + in-memory set + key-kind lock + unique index; sim + fuzz pass
+Bundled versioned detection rules (local JSON),detection,must,unknown,partial,code complete; not compiled or device-tested; assets/detectors/v1.json with verifiedVersions (empty)
+Diagnostics flag when a tracked app updates to an unverified version,detection,must,unknown,partial,code complete; not compiled or device-tested; Settings > Diagnostics and S04 show 'not yet verified' per installed version
+Floating real-time counter overlay,overlay,must,yes,partial,"code complete; not compiled or device-tested; accessibility overlay pill, severity dot follows the all-apps goal"
+Counter auto-shows on short-video screen and hides when leaving,overlay,must,yes,partial,code complete; not compiled or device-tested; modes auto / always / off; 1.5 s hide delay
+Draggable counter with remembered position,overlay,must,unknown,partial,"code complete; not compiled or device-tested; long-press drag, edge snap, reset in Settings"
+Session tracking (start/end/duration/video count),tracking,must,unknown,partial,code complete; not compiled or device-tested; live active time written every 5 s
+Close sessions left open by crash or reboot at last activity,tracking,must,unknown,partial,code complete; not compiled or device-tested; uses touched active time; sql checks pass
+Survives phone restart (service rebind + workers),reliability,must,unknown,partial,"code complete; not compiled or device-tested; BootReceiver with goAsync, WorkManager jobs persist"
+Accessibility service health check and recovery flow,reliability,must,unknown,partial,"code complete; not compiled or device-tested; HealthCheckWorker 15 min, notice at most every 6 h, S16 screen"
+Dashboard (today total/time/sessions/per-app/goal progress),stats,must,yes,partial,code complete; not compiled or device-tested; live minutes of the open session (C-6 fixed)
+Daily statistics,stats,must,yes,partial,code complete; not compiled or device-tested; S08 Day: hourly chart from event times
+Weekly statistics with week-over-week comparison,stats,must,unknown,partial,"code complete; not compiled or device-tested; S08 Week, Monday start"
+Monthly statistics with month-over-month comparison,stats,must,unknown,partial,code complete; not compiled or device-tested; S08 Month
+Per-app statistics,stats,must,yes,partial,code complete; not compiled or device-tested; S09 week/month chart + sessions
+Activity history (sessions list),stats,must,unknown,partial,"code complete; not compiled or device-tested; S10 grouped by day, load more"
+Reduction goals (reels or minutes; total or per app),goals,must,yes,partial,code complete; not compiled or device-tested; S11 + editor; free; one goal per scope
+Goal warning at a set percentage,goals,must,unknown,partial,"code complete; not compiled or device-tested; 50-95 %, once per day"
+Optional block screen when a goal is reached,goals,must,yes,partial,"code complete; not compiled or device-tested; S12 accessibility overlay, close app / breathe / snooze (capped)"
+Gradual reduction plan (lower target weekly to a floor),goals,must,unknown,partial,code complete; not compiled or device-tested; DayRolloverWorker applies due steps
+Goal notifications (warned / reached / day met),notifications,must,unknown,partial,code complete; not compiled or device-tested; once per goal per day
+Daily summary reminder,notifications,must,unknown,partial,"code complete; not compiled or device-tested; WorkManager, inexact time"
+Weekly report notification,notifications,must,unknown,partial,code complete; not compiled or device-tested; week vs last week
+In-session nudge after N minutes or videos,notifications,must,unknown,partial,code complete; not compiled or device-tested; once per session
+Light and dark mode (follow system or manual),settings,must,unknown,partial,code complete; not compiled or device-tested; contrast-checked tokens
+All data stored on-device only; no INTERNET permission,privacy,must,yes,yes,"verified by source inspection: no INTERNET permission, no network libraries, backup excluded (check_project.py)"
+Pause tracking (1h / until tomorrow),privacy,must,unknown,partial,"code complete; not compiled or device-tested; S07 card, S15, Today banner with Resume"
+Delete history for a period,privacy,must,unknown,partial,code complete; not compiled or device-tested; today / last 7 days / older than 30 days; open session kept
+Delete all data,privacy,must,unknown,partial,"code complete; not compiled or device-tested; rotates the salt, clears the local log"
+Data retention setting for detailed events,privacy,must,unknown,partial,"code complete; not compiled or device-tested; 30/90/365 days, PruneWorker weekly"
+Counter style size opacity and timer toggle,overlay,should,unknown,partial,code complete; not compiled or device-tested
+Export data as CSV (user-started),privacy,should,unknown,partial,code complete; not compiled or device-tested; Storage Access Framework; counts and times only
+Custom daily reset hour,stats,should,unknown,partial,"code complete; not compiled or device-tested; 00:00-06:00, re-plans jobs"
+Severity meter on the dashboard and counter,stats,should,yes,partial,code complete; not compiled or device-tested; own visual; word + colour
+Goal time windows (bedtime) and weekday selection,goals,should,unknown,partial,code complete; not compiled or device-tested; windows over midnight supported
+Local diagnostics log viewable and shareable by the user,reliability,should,unknown,partial,"code complete; not compiled or device-tested; 500-line ring buffer, no screen content"
+Detect and count Facebook Reels,detection,could,yes,partial,"code complete; detection UNVERIFIED until the device test protocol passes; opt-in, generic fallback only"
+Detect and count Snapchat Spotlight,detection,could,yes,partial,"code complete; detection UNVERIFIED until the device test protocol passes; opt-in, generic fallback only"
+Home-screen widget,stats,could,unknown,partial,"code complete; not compiled or device-tested; classic AppWidgetProvider, no extra library"
+Streaks (days goal met),goals,could,unknown,partial,code complete; not compiled or device-tested; from met_day / missed_day results
+Breathing break interrupt,goals,could,unknown,partial,"code complete; not compiled or device-tested; 30 s screen, offered on the block screen"
+Import from a CSV/JSON backup,privacy,could,unknown,partial,code complete; not compiled or device-tested; imports daily totals from this app's CSV only; never overwrites existing days
+Subscription / Pro tier / paywall,monetisation,could,yes,skip,product decision: 100% free; every feature available to everyone
+Google Play Billing / RevenueCat,monetisation,could,yes,skip,no payments
+Login / registration / accounts,accounts,could,unknown,skip,no accounts by design
+Scroll battles / friend leaderboard,social,could,yes,skip,needs a server; removed
+Remote detector rule updates,detection,could,unknown,skip,no server; rules ship inside app updates
+Cloud backup or sync,privacy,could,unknown,skip,no server; allowBackup=false
+Remote analytics or crash reporting,reliability,could,yes,skip,no data leaves the device; local log instead
+iOS version,platform,could,no,skip,Android-only product; iOS gives no access to other apps' screens
+BrainPal brand name artwork and copy,brand,could,yes,skip,owned by EpowerX Labs; build your own
+Reading or storing video content or creators,detection,could,no,skip,only a salted in-memory-derived hash is stored

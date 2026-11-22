@@ -33,3 +33,37 @@ google-services.json
 
 # Android Profiling
 *.hprof
+
+# ---- Tidemark additions (kept on top of the original rules above) ----
+
+# Claude Code workspace: private skills, local settings, worktrees
+.claude/
+
+# Gradle wrapper cache / build output anywhere
+**/.gradle/
+**/build/
+android/app/schemas/
+
+# Signing and secrets: never commit
+*.p12
+*.pem
+*.key
+keystore.properties
+signing.properties
+.env
+.env.*
+secrets.*
+*credentials*.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS and editor leftovers
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp
+~$*

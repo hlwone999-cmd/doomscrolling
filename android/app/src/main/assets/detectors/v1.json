@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "_note": "Bundled detection rules. Structure only; never content. Every pagerIds entry is an UNVERIFIED guess until checked on a real device with `adb shell uiautomator dump` and logged in replica/accuracy.md. verifiedVersions lists target-app versionCode ranges that passed the test protocol; it is empty until then, so Settings > Diagnostics shows every app as 'not verified'. genericFallback finds any full-screen vertical pager whose current item fills it.",
+  "settleMs": 400,
+  "apps": [
+    {
+      "package": "com.instagram.android",
+      "name": "Instagram",
+      "surface": "reels",
+      "pagerIds": ["com.instagram.android:id/clips_viewer_view_pager"],
+      "genericFallback": true,
+      "verifiedVersions": []
+    },
+    {
+      "package": "com.google.android.youtube",
+      "name": "YouTube",
+      "surface": "shorts",
+      "pagerIds": ["com.google.android.youtube:id/reel_recycler"],
+      "genericFallback": true,
+      "verifiedVersions": []
+    },
+    {
+      "package": "com.zhiliaoapp.musically",
+      "name": "TikTok",
+      "surface": "tiktok_feed",
+      "pagerIds": [],
+      "genericFallback": true,
+      "verifiedVersions": []
+    },
+    {
+      "package": "com.ss.android.ugc.trill",
+      "name": "TikTok",
+      "surface": "tiktok_feed",
+      "pagerIds": [],
+      "genericFallback": true,
+      "verifiedVersions": []
+    },
+    {
+      "package": "com.facebook.katana",
+      "name": "Facebook",
+      "surface": "fb_reels",
+      "pagerIds": [],
+      "genericFallback": true,
+      "verifiedVersions": []
+    },
+    {
+      "package": "com.snapchat.android",
+      "name": "Snapchat",
+      "surface": "spotlight",
+      "pagerIds": [],
+      "genericFallback": true,
+      "verifiedVersions": []
+    }
+  ]
+}

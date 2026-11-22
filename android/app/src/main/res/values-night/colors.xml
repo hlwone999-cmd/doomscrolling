@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Mirror tokens dark.bg / surface / text / text-muted. -->
+    <color name="window_bg">#0E1014</color>
+    <color name="widget_bg">#171A20</color>
+    <color name="widget_text">#ECEEF2</color>
+    <color name="widget_muted">#A3ABB7</color>
+    <!-- Brand (tokens brand.deep / foam / mark). Same in light and dark: the icon tile is always teal. -->
+    <color name="brand_deep">#0B4F59</color>
+    <color name="brand_foam">#E8FBF8</color>
+    <color name="brand_mark">#FF9A76</color>
+</resources>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Mirror tokens light.bg / surface / text / text-muted. Only for the window before Compose draws and the widget. -->
+    <color name="window_bg">#F6F7F9</color>
+    <color name="widget_bg">#FFFFFF</color>
+    <color name="widget_text">#12151A</color>
+    <color name="widget_muted">#535C69</color>
+    <!-- Brand (tokens brand.deep / foam / mark). Same in light and dark: the icon tile is always teal. -->
+    <color name="brand_deep">#0B4F59</color>
+    <color name="brand_foam">#E8FBF8</color>
+    <color name="brand_mark">#FF9A76</color>
+</resources>

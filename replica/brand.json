@@ -1,0 +1,7 @@
+{
+  "name": "Tidemark",
+  "avoid": ["BrainPal", "Brain Pal", "Brainrot", "Brainrot Reels Counter", "EpowerX", "EpowerX Labs", "ScrollCount"],
+  "domains": ["brainrotapp.ai"],
+  "colors": [],
+  "_notes": "avoid: the original's name, its alternate store titles and developer, plus our own retired placeholder (ScrollCount) so it cannot leak into anything user-visible. colors: the original's brand colours were never observed (no screenshots were taken), so none are listed; add them if you capture the original's screens. Internal identifiers (Kotlin package app.tidemark, tidemark.db) are not user-visible and are excluded by running the sweep on user-facing files, see brand.md."
+}
