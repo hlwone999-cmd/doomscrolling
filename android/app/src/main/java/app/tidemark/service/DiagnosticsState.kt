@@ -29,6 +29,13 @@ object DiagnosticsState {
         val position: Int = 0,
         /** Why the last probe did or didn't see a new video. */
         val pageDecision: String? = null,
+        /** Timestamps (epoch ms) along the counting path, to see where time goes. */
+        val lastScrollAt: Long = 0L,
+        val lastScrollKind: String? = null,
+        val lastPageChangeAt: Long = 0L,
+        val lastCountAt: Long = 0L,
+        /** Bottom navigation bar visible or not: tells the main feed from search/detail screens. */
+        val feedContext: String? = null,
     )
 
     private val _state = MutableStateFlow(Snapshot())

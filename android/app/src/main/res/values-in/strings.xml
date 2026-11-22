@@ -309,4 +309,9 @@
     <string name="diag_write_duplicates">Duplikat diabaikan (sudah tersimpan)</string>
     <string name="diag_write_failures">Gagal ditulis</string>
     <string name="diag_write_last_error">Kesalahan tulis terakhir</string>
+    <string name="diag_feed_context">Jenis layar</string>
+    <string name="diag_t_scroll">Event scroll pager terakhir</string>
+    <string name="diag_t_page">Perpindahan halaman terakhir</string>
+    <string name="diag_t_count">Hitungan terakhir diterima</string>
+    <string name="diag_t_write">Penulisan database terakhir (durasi)</string>
 </resources>

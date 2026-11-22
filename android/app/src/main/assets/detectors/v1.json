@@ -1,7 +1,7 @@
 {
   "version": 2,
   "_note": "Bundled detection rules. Structure only: no text is ever read. A short-video screen is a container that fills the window and whose current item fills the container (full-screen pages), scrolling vertically. pagerIdHints are view-id fragments that only raise confidence; the structure must still match, so a wrong guess can't cause counts on its own. verifiedVersions lists target-app versionCode ranges that passed the device test protocol; empty until then.",
-  "settleMs": 400,
+  "settleMs": 250,
   "apps": [
     {
       "package": "com.instagram.android",

@@ -12,11 +12,13 @@ package app.tidemark.detect
  *
  * Counting rules (architecture.md, "When a video counts"):
  *   1. a video counts once it stays the current video for settleMs
- *   2. the first video on entering the screen counts too
+ *   2. the video on screen when the user arrives (opening the app's feed, a
+ *      search result, a profile video, coming back from comments) is marked
+ *      seen but NOT counted; counting starts with the first swipe (BUG-005)
  *   3. the same key never counts twice in one session
- *   4. after a count, the next count needs a scroll or a fresh entry to the
- *      screen, so a UI change that alters the key (rotation, a like, the
- *      comments sheet) cannot produce a second count for the same video
+ *   4. every count needs a swipe since the last settled video, so a UI change
+ *      that alters the key (rotation, a like, the comments sheet) cannot
+ *      produce a count
  *   5. one session per screen visit; leaving for less than graceMs keeps it
  *   6. keys of one kind per session (all "i:" or all "h:"), never mixed
  */
@@ -38,7 +40,8 @@ class CountingEngine(
         var onSurfaceSince: Long? = null
         var leftAt: Long? = null
         var lastTouchAt: Long = startedAt
-        var mayCount = true // rule 4: true on entry and after each scroll
+        var mayCount = false   // rule 4: true only after a swipe
+        var entryUnseen = true // rule 2: the next settled video is the arrival video
     }
 
     private var open: Open? = null
@@ -81,7 +84,8 @@ class CountingEngine(
         if (o.onSurfaceSince == null) {
             o.onSurfaceSince = now
             o.leftAt = null
-            o.mayCount = true // fresh entry may count the video on screen
+            o.mayCount = false   // arriving is not a swipe
+            o.entryUnseen = true // the video shown on arrival is marked seen, not counted
         }
         hideAt = null
         setOverlay(true)
@@ -189,9 +193,16 @@ class CountingEngine(
 
     private fun commit(o: Open, key: String, now: Long) {
         if (!o.mayCount) {
-            sink.note("not counted $key: no swipe since the last count")
+            if (o.entryUnseen) {
+                o.entryUnseen = false
+                if (o.counted.add(key) && o.keyKind == null) o.keyKind = key.first()
+                sink.note("not counted $key: video shown on arrival (counting starts with the first swipe)")
+            } else {
+                sink.note("not counted $key: no swipe since the last count")
+            }
             return
         }
+        o.entryUnseen = false
         // A settled video uses up the scroll, even one already counted (swipe back),
         // so a later key change on that same video cannot count it again.
         o.mayCount = false
@@ -228,7 +239,7 @@ class CountingEngine(
 }
 
 data class EngineConfig(
-    val settleMs: Long = 400,
+    val settleMs: Long = 250,
     val graceMs: Long = 30_000,
     val hideDelayMs: Long = 1_500,
     val touchEveryMs: Long = 5_000,

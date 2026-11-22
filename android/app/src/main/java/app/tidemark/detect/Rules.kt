@@ -57,7 +57,7 @@ data class Rules(val version: Int, val settleMs: Long, val apps: Map<String, App
                 )
                 rule.packageName to rule
             }
-            return Rules(root.getInt("version"), root.optLong("settleMs", 400L), apps)
+            return Rules(root.getInt("version"), root.optLong("settleMs", 250L), apps)
         }
     }
 }

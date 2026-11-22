@@ -19,7 +19,7 @@ LEFT_SURFACE, APP_SWITCH, SCREEN_OFF, SERVICE_STOPPED, PAUSED, DAY_ROLLOVER = (
 
 
 class Cfg:
-    def __init__(self, settle=400, grace=30_000, hide=1_500, touch=5_000):
+    def __init__(self, settle=250, grace=30_000, hide=1_500, touch=5_000):
         self.settleMs, self.graceMs, self.hideDelayMs, self.touchEveryMs = settle, grace, hide, touch
 
 
@@ -32,7 +32,8 @@ class Open:
         self.onSurfaceSince = None
         self.leftAt = None
         self.lastTouchAt = startedAt
-        self.mayCount = True
+        self.mayCount = False
+        self.entryUnseen = True
 
 
 class Engine:
@@ -67,7 +68,8 @@ class Engine:
         if o.onSurfaceSince is None:
             o.onSurfaceSince = now
             o.leftAt = None
-            o.mayCount = True
+            o.mayCount = False
+            o.entryUnseen = True
         self.hideAt = None
         self._setOverlay(True)
 
@@ -169,7 +171,14 @@ class Engine:
 
     def _commit(self, o, key, now):
         if not o.mayCount:
+            if o.entryUnseen:
+                o.entryUnseen = False
+                if key not in o.counted:
+                    o.counted.add(key)
+                    if o.keyKind is None:
+                        o.keyKind = key[0]
             return
+        o.entryUnseen = False
         o.mayCount = False
         if key in o.counted:
             return
@@ -243,10 +252,14 @@ def settle(e, key, at):
 
 
 def scenarios():
-    print("Scenarios mirrored from CountingEngineTest.kt")
-    e, s, _ = make(); e.onSurface(IG, "reels", 0); e.onObserve("i:0", 10); e.tick(300)
-    a = len(s.counted); e.tick(410)
-    check("firstVideoCountsAfterSettle", a == 0 and [c[1] for c in s.counted] == ["i:0"] and s.overlay)
+    print("Scenarios mirrored from CountingEngineTest.kt (BUG-005: arrival video is not counted)")
+    e, s, _ = make(); e.onSurface(IG, "reels", 0); e.onObserve("i:0", 10); e.tick(400)
+    check("arrivalVideoIsNotCounted", s.counted == [], s.counted)
+
+    e, s, _ = make(); e.onSurface(IG, "reels", 0); settle(e, "i:0", 0)
+    e.onScroll(1000); e.onObserve("i:1", 1010); e.tick(1200)
+    a = len(s.counted); e.tick(1260)
+    check("firstSwipeCountsAfterSettle", a == 0 and [c[1] for c in s.counted] == ["i:1"], s.counted)
 
     e, s, _ = make(); e.onSurface(IG, "reels", 0); e.onScroll(10); e.onObserve("i:1", 100); e.onScroll(200)
     e.onObserve("i:2", 250); e.onScroll(350); e.onObserve("i:3", 400); e.tick(900)
@@ -254,25 +267,30 @@ def scenarios():
 
     e, s, _ = make(); e.onSurface(IG, "reels", 0); settle(e, "i:0", 0); e.onScroll(1000); settle(e, "i:1", 1100)
     e.onScroll(3000); settle(e, "i:0", 3100)
-    check("swipingBackDoesNotRecount", [c[1] for c in s.counted] == ["i:0", "i:1"], s.counted)
+    check("swipingBackDoesNotRecount", [c[1] for c in s.counted] == ["i:1"], s.counted)
 
-    e, s, _ = make(); e.onSurface(IG, "reels", 0); settle(e, "h:aaaaaaaaaaaaaaaa", 0); settle(e, "h:bbbbbbbbbbbbbbbb", 2000)
-    check("keyChangeWithoutScrollDoesNotRecount", len(s.counted) == 1)
+    e, s, _ = make(); e.onSurface(IG, "reels", 0); settle(e, "h:aaaaaaaaaaaaaaaa", 0)
+    e.onScroll(1000); settle(e, "h:cccccccccccccccc", 1100); settle(e, "h:bbbbbbbbbbbbbbbb", 3000)
+    check("keyChangeWithoutScrollDoesNotCount", len(s.counted) == 1, s.counted)
 
     e, s, _ = make(); e.onSurface(IG, "reels", 0); settle(e, "h:aaaaaaaaaaaaaaaa", 0)
     e.onScroll(1000); settle(e, "h:cccccccccccccccc", 1100); e.onScroll(2000); settle(e, "h:aaaaaaaaaaaaaaaa", 2100)
     settle(e, "h:dddddddddddddddd", 4000)
-    check("swipeBackThenKeyChangeDoesNotCount", len(s.counted) == 2, s.counted)
+    check("swipeBackThenKeyChangeDoesNotCount", len(s.counted) == 1, s.counted)
 
-    e, s, _ = make(); e.onSurface(IG, "reels", 0)
-    for i in range(5): e.onObserve("i:7", 10 + i)
-    e.tick(500); e.tick(900); e.tick(5000)
+    e, s, _ = make(); e.onSurface(IG, "reels", 0); settle(e, "i:6", 0); e.onScroll(500)
+    for i in range(5): e.onObserve("i:7", 510 + i)
+    e.tick(900); e.tick(1300); e.tick(6000)
     check("duplicateObservationsCountOnce", len(s.counted) == 1)
 
     e, s, _ = make(); e.onSurface(IG, "reels", 0); settle(e, "i:0", 0); e.onOffSurface(1000); e.tick(2600)
     hidden = not s.overlay
     e.onSurface(IG, "reels", 10_000); shown = s.overlay; settle(e, "i:0", 10_000)
-    check("shortLeaveKeepsSessionAndDedupe", hidden and shown and len(s.opened) == 1 and len(s.counted) == 1 and not s.closed)
+    check("shortLeaveKeepsSessionAndCountsNothing", hidden and shown and len(s.opened) == 1 and not s.counted and not s.closed)
+
+    e, s, _ = make(); e.onSurface(IG, "reels", 0); settle(e, "i:0", 0); e.onOffSurface(1000)
+    e.onSurface(IG, "reels", 5000); settle(e, "i:9", 5000)
+    check("returningToADifferentVideoIsNotCounted", not s.counted, s.counted)
 
     e, s, _ = make(); e.onSurface(IG, "reels", 0); settle(e, "i:0", 0); e.onOffSurface(20_000); e.tick(50_000)
     ok = s.closed == [(1, 20_000, LEFT_SURFACE)] and s.activeMs == [20_000]
@@ -286,18 +304,19 @@ def scenarios():
     check("appSwitchClosesAndOpens", s.closed[0][2] == APP_SWITCH and s.opened == [(1, IG), (2, YT)])
 
     e, s, _ = make(); e.onSurface(IG, "reels", 0); settle(e, "i:0", 0); e.onScroll(1000); settle(e, "h:aaaaaaaaaaaaaaaa", 1100)
-    check("mixedKeyKindsIgnoredInOneSession", len(s.counted) == 1)
+    check("mixedKeyKindsIgnoredInOneSession", not s.counted)
 
-    e, s, _ = make(); e.onSurface(IG, "reels", 0); e.onObserve(None, 0); e.tick(5_000)
+    e, s, _ = make(); e.onSurface(IG, "reels", 0); e.onScroll(0); e.onObserve(None, 0); e.tick(5_000)
     check("nullKeyNeverCounts", not s.counted)
 
     e, s, _ = make(); e.onSurface(IG, "reels", 0); e.onScreenOff(8_000)
     check("screenOffClosesImmediately", s.closed == [(1, 8_000, SCREEN_OFF)] and not s.overlay)
 
-    e, s, st = make(); e.onSurface(IG, "reels", 0); settle(e, "i:0", 0); st["day"] = "2026-11-22"; e.tick(10_000)
+    e, s, st = make(); e.onSurface(IG, "reels", 0); settle(e, "i:0", 0); e.onScroll(500); settle(e, "i:1", 500)
+    st["day"] = "2026-11-22"; e.tick(10_000)
     ok = s.closed[0][2] == DAY_ROLLOVER and len(s.opened) == 2
-    settle(e, "i:0", 10_000)
-    check("dayRolloverSplitsSession", ok and len(s.counted) == 2)
+    settle(e, "i:1", 10_000); e.onScroll(11_000); settle(e, "i:2", 11_000)
+    check("dayRolloverSplitsSession", ok and [c[1] for c in s.counted] == ["i:1", "i:2"], s.counted)
 
     e, s, st = make(); e.onSurface(IG, "reels", 0); e.onOffSurface(1_000); st["day"] = "2026-11-22"
     e.onSurface(IG, "reels", 20_000)
@@ -305,7 +324,7 @@ def scenarios():
           s.closed == [(1, 1_000, DAY_ROLLOVER)] and s.activeMs == [1_000], (s.closed, s.activeMs))
 
     e, s, _ = make(); e.onSurface(IG, "reels", 1_000); e.onObserve("i:0", 2_000)
-    check("nextDeadlineTracksPendingSettle", e.nextDeadline() == 2_400, e.nextDeadline())
+    check("nextDeadlineTracksPendingSettle", e.nextDeadline() == 2_250, e.nextDeadline())
 
     e, s, _ = make(); e.stop(0, PAUSED)
     check("stopWhenIdleDoesNothing", not s.closed and e.nextDeadline() is None)
@@ -374,7 +393,7 @@ def fuzz(runs=3000, steps=200, seed=7):
             kinds = {k[0] for k in keys}
             if len(kinds) > 1:
                 bad("mixed key kinds in one session", (run, tok, keys))
-            if any(d < 400 for _, _, d in items):
+            if any(d < Cfg().settleMs for _, _, d in items):
                 bad("counted before settle", (run, tok, items))
         closed_tokens = [c[0] for c in s.closed]
         if len(closed_tokens) != len(set(closed_tokens)):
@@ -425,6 +444,9 @@ def no_recount_without_scroll(runs=2000, seed=11):
 
 # ---------------- PageTracker + FeedPipeline (port of detect/PageTracker.kt) ----------------
 class PageTracker:
+    MOTION_WINDOW_MS = 1500
+    QUIET_MS = 300
+
     def __init__(self):
         self.position = 0
         self.previousPosition = None
@@ -435,11 +457,11 @@ class PageTracker:
         self._clear()
 
     def _clear(self):
-        self.scrollIndex = None
-        self.moved = False
+        self.lastMotionAt = None
         self.deltaSum = 0
         self.midUpper = None
         self.midLower = None
+        self.scrollIndex = None
 
     def reset(self):
         self.position = 0
@@ -448,38 +470,46 @@ class PageTracker:
         self.lastIndex = None
         self._clear()
 
-    def onScroll(self, fromIndex, toIndex, deltaY):
+    def onScroll(self, f, t, dy, now):
         self.scrollEvents += 1
-        self.moved = True
-        self.deltaSum += deltaY
-        if fromIndex >= 0 and fromIndex == toIndex:
-            self.scrollIndex = fromIndex
+        settled = f if (f >= 0 and f == t) else None
+        reference = self.scrollIndex if self.scrollIndex is not None else self.lastIndex
+        newIndex = settled is not None and reference is not None and settled != reference
+        moving = dy != 0 or (f >= 0 and t >= 0 and f != t) or newIndex
+        if settled is not None:
+            self.scrollIndex = settled
+        if not moving:
+            return "NOISE"
+        self.lastMotionAt = now
+        self.deltaSum += dy
+        return "NEW_INDEX" if newIndex else "MOVING"
 
-    def onMidSwipe(self, upper, lower):
-        self.moved = True
+    def onMidSwipe(self, upper, lower, now):
+        self.lastMotionAt = now
         self.midUpper, self.midLower = upper, lower
 
-    def onSettled(self, signature, row):
+    def onSettled(self, signature, row, now):
         index = row if row is not None else self.scrollIndex
-        prevSig = self.lastSignature
-        if prevSig is None:
-            self.lastSignature = signature
-            self.lastIndex = index
+        if self.lastSignature is None:
+            self.lastSignature, self.lastIndex = signature, index
             self._clear()
-            return (self.position, False, "first video on screen")
+            return (self.position, False, "video on entry")
         prevIndex = self.lastIndex
-        sigChanged = signature != prevSig
+        motionAt = self.lastMotionAt
+        moved = motionAt is not None and now - motionAt <= self.MOTION_WINDOW_MS
+        sigChanged = signature != self.lastSignature
         idxChanged = index is not None and prevIndex is not None and index != prevIndex
         if not sigChanged and not idxChanged:
             if index is not None:
                 self.lastIndex = index
-            self._clear()
+            if motionAt is None or now - motionAt >= self.QUIET_MS:
+                self._clear()
             return (self.position, False, "same video")
-        if not self.moved:
+        if not moved:
             self.lastSignature = signature
             if index is not None:
                 self.lastIndex = index
-            return (self.position, False, "page structure changed without a swipe: not a new video")
+            return (self.position, False, "page structure changed without a swipe")
         if idxChanged:
             step = index - prevIndex
         elif self.deltaSum != 0:
@@ -493,8 +523,7 @@ class PageTracker:
         self.previousPosition = self.position
         self.position += step
         self.pageChanges += 1
-        self.lastSignature = signature
-        self.lastIndex = index
+        self.lastSignature, self.lastIndex = signature, index
         self._clear()
         return (self.position, True, "page changed")
 
@@ -508,16 +537,18 @@ class FeedPipeline:
         self.pages.reset()
 
     def onPagerScroll(self, f, t, dy, now):
-        self.pages.onScroll(f, t, dy)
-        self.engine.onScroll(now)
+        k = self.pages.onScroll(f, t, dy, now)
+        if k != "NOISE":
+            self.engine.onScroll(now)
+        return k
 
     def onMidSwipe(self, upper, lower, now):
-        self.pages.onMidSwipe(upper, lower)
+        self.pages.onMidSwipe(upper, lower, now)
         self.engine.onScroll(now)
         self.engine.onObserve(None, now)
 
     def onSettledPage(self, signature, row, now):
-        r = self.pages.onSettled(signature, row)
+        r = self.pages.onSettled(signature, row, now)
         if r[1]:
             self.engine.onScroll(now)
         self.engine.onObserve("p:%d" % r[0], now)
@@ -561,24 +592,24 @@ class FeedHarness:
 
 
 def feed_scenarios():
-    print("FeedPipeline (port of FeedPipelineTest.kt)")
+    print("FeedPipeline (port of FeedPipelineTest.kt, BUG-005 semantics)")
     h = FeedHarness(); h.settle("A")
-    check("feed: firstVideoCounts", h.keys() == ["p:0"], h.keys())
+    check("feed: arrivalVideoIsNotCounted", h.keys() == [], h.keys())
 
     h = FeedHarness(); h.settle("V0")
     for i in range(1, 11):
         h.swipe("V%d" % (i - 1), "V%d" % i, i - 1, i)
-    check("feed: tenSwipesGiveTenMoreVideos", h.keys() == ["p:%d" % i for i in range(11)], h.keys())
+    check("feed: tenSwipesGiveTenCounts", h.keys() == ["p:%d" % i for i in range(1, 11)], h.keys())
 
     h = FeedHarness(); h.settle("V0")
     for i in range(1, 11):
         h.swipe("V%d" % (i - 1), "V%d" % i)
-    check("feed: tenSwipesWithoutAdapterIndexesStillCount", len(h.keys()) == 11, h.keys())
+    check("feed: tenSwipesWithoutAdapterIndexesStillCount", len(h.keys()) == 10, h.keys())
 
     h = FeedHarness(); v = ["A", "B", "C"]; h.settle("A")
     for i in range(1, 10):
         h.swipe(v[(i - 1) % 3], v[i % 3], i - 1, i)
-    check("feed: recycledContainersStillCount", len(h.keys()) == 10, h.keys())
+    check("feed: recycledContainersStillCount", len(h.keys()) == 9, h.keys())
 
     h = FeedHarness(); h.settle("A")
     for _ in range(6):
@@ -586,32 +617,55 @@ def feed_scenarios():
     h.feed.onMidSwipe("A", "B", h.now); h.advance(30)
     h.feed.onPagerScroll(1, 1, 0, h.now)
     h.settle("B"); h.settle("B"); h.settle("B"); h.advance(3000)
-    check("feed: oneSwipeIsCountedOnce", h.keys() == ["p:0", "p:1"], h.keys())
+    check("feed: oneSwipeIsCountedOnce", h.keys() == ["p:1"], h.keys())
 
     h = FeedHarness(); h.settle("A")
     h.feed.onSettledPage(["A", "A-inner-rebuilt"], None, h.now); h.advance(600)
     h.settle("A"); h.advance(2000); h.settle("A")
-    check("feed: likeAndCommentDoNotCount", h.keys() == ["p:0"], h.keys())
+    check("feed: likeAndCommentDoNotCount", h.keys() == [], h.keys())
 
     h = FeedHarness(); h.settle("A")
     h.e.onOffSurface(h.now); h.advance(5000)
     h.e.onSurface("tiktok", "tiktok_feed", h.now); h.settle("A")
-    check("feed: openingAProfileDoesNotCount", h.keys() == ["p:0"] and not h.sink.closed, (h.keys(), h.sink.closed))
+    check("feed: openingAProfileDoesNotCount", h.keys() == [] and not h.sink.closed, (h.keys(), h.sink.closed))
+
+    h = FeedHarness(); h.settle("A"); h.e.onOffSurface(h.now); h.advance(40_000)
+    h.e.onSurface("tiktok", "tiktok_feed", h.now); h.feed.onNewSession(); h.settle("SearchResult")
+    check("feed: openingASearchResultDoesNotCount", h.keys() == [], h.keys())
 
     h = FeedHarness(); h.settle("A"); h.swipe("A", "B", 0, 1)
     h.feed.onPagerScroll(1, 0, -900, h.now); h.advance(40)
     h.feed.onMidSwipe("A", "B", h.now); h.advance(40)
     h.feed.onPagerScroll(0, 0, -900, h.now); h.advance(150)
     h.settle("A"); h.swipe("A", "B", 0, 1)
-    check("feed: sameVideoIsNotCountedAgain", h.keys() == ["p:0", "p:1"], h.keys())
+    check("feed: forwardAndBackDoNotRecount", h.keys() == ["p:1"], h.keys())
 
     h = FeedHarness(); h.settle("A")
     h.feed.onPagerScroll(0, 1, 200, h.now); h.advance(40)
     h.feed.onPagerScroll(0, 0, -200, h.now); h.advance(150); h.settle("A")
-    check("feed: bounceBackIsNotANewVideo", h.keys() == ["p:0"], h.keys())
+    check("feed: bounceBackIsNotANewVideo", h.keys() == [], h.keys())
 
     h = FeedHarness(); h.settle("A"); h.settle("Z")
-    check("feed: pageChangeWithoutAnySwipeIsNotCounted", h.keys() == ["p:0"], h.keys())
+    check("feed: pageChangeWithoutAnySwipeIsNotCounted", h.keys() == [], h.keys())
+
+    # BUG-005: a probe at the very start of the swipe (old page still on screen) must not erase the swipe.
+    h = FeedHarness(); h.settle("A")
+    h.feed.onPagerScroll(-1, -1, 300, h.now); h.advance(20)
+    h.feed.onSettledPage(["A", "A-inner"], None, h.now); h.advance(80)   # early probe: same page
+    h.advance(100)                                                       # swipe finishes, no more events
+    h.feed.onSettledPage(["B", "B-inner"], None, h.now); h.advance(300)
+    check("feed: earlyProbeDoesNotEraseTheSwipe", h.keys() == ["p:1"], h.keys())
+
+    # BUG-005: scroll events that move nothing must not delay the count.
+    h = FeedHarness(); h.settle("A")
+    h.feed.onPagerScroll(0, 1, 0, h.now); h.advance(40)
+    h.feed.onPagerScroll(1, 1, 0, h.now)
+    h.feed.onSettledPage(["B", "B-inner"], None, h.now)
+    t0 = h.now
+    for _ in range(10):                                                   # trailing no-op events
+        h.advance(30); h.feed.onPagerScroll(1, 1, 0, h.now)
+    h.advance(260 - (h.now - t0))
+    check("feed: countLandsWithin260msOfThePageChange", h.keys() == ["p:1"], (h.keys(), h.now - t0))
 
     h = FeedHarness(); h.settle("A"); shown = h.sink.overlay
     h.e.onOffSurface(h.now); h.advance(2000); hidden = not h.sink.overlay
@@ -620,16 +674,21 @@ def feed_scenarios():
           shown and hidden and [c[2] for c in h.sink.closed] == [LEFT_SURFACE], h.sink.closed)
 
     print("PageTracker (port of PageTrackerTest.kt)")
-    t = PageTracker(); t.onSettled(["W"], None); t.onScroll(0, 0, 0); t.onSettled(["W"], None)
-    t.onScroll(0, 1, 0); t.onScroll(1, 1, 0); r = t.onSettled(["W"], None)
+    t = PageTracker(); t.onSettled(["W"], None, 0); t.onScroll(0, 0, 0, 10); t.onSettled(["W"], None, 400)
+    t.onScroll(0, 1, 0, 500); t.onScroll(1, 1, 0, 600); r = t.onSettled(["W"], None, 700)
     check("tracker: constantWrapperWithChangingIndexStillMoves", r[1] and r[0] == 1, r)
-    t = PageTracker(); t.onSettled(["A"], 4); t.onScroll(4, 5, 0); t.onScroll(5, 5, 0); r1 = t.onSettled(["B"], None)
-    t.onScroll(5, 4, 0); t.onScroll(4, 4, 0); r2 = t.onSettled(["A"], None)
+    t = PageTracker(); t.onSettled(["A"], 4, 0); t.onScroll(4, 5, 0, 100); t.onScroll(5, 5, 0, 200); r1 = t.onSettled(["B"], None, 300)
+    t.onScroll(5, 4, 0, 400); t.onScroll(4, 4, 0, 500); r2 = t.onSettled(["A"], None, 600)
     check("tracker: adapterIndexGivesStepAndDirection", r1[0] == 1 and r2[0] == 0, (r1, r2))
-    t = PageTracker(); t.onSettled(["B"], None); t.onMidSwipe("A", "B"); r = t.onSettled(["A"], None)
+    t = PageTracker(); t.onSettled(["B"], None, 0); t.onMidSwipe("A", "B", 100); r = t.onSettled(["A"], None, 200)
     check("tracker: midSwipeTellsDirection", r[0] == -1, r)
-    t = PageTracker(); t.onSettled(["W", "page1"], None); t.onMidSwipe("page1", "page2"); r = t.onSettled(["W", "page2"], None)
+    t = PageTracker(); t.onSettled(["W", "page1"], None, 0); t.onMidSwipe("page1", "page2", 100); r = t.onSettled(["W", "page2"], None, 200)
     check("tracker: innerContainerChangeCountsWhenWrapperIsConstant", r[1] and r[0] == 1, r)
+    t = PageTracker(); t.onSettled(["A"], None, 0); t.onScroll(-1, -1, 100, 100); r = t.onSettled(["B"], None, 100 + 1600)
+    check("tracker: movementExpiresAfterTheWindow", not r[1], r)
+    t = PageTracker(); t.onSettled(["A"], 3, 0)
+    check("tracker: noOpScrollIsNoise", t.onScroll(3, 3, 0, 10) == "NOISE")
+    check("tracker: newIndexIsReported", t.onScroll(4, 4, 0, 20) == "NEW_INDEX")
 
 
 if __name__ == "__main__":

@@ -127,6 +127,28 @@ class SurfaceDetector {
     }
 
     /**
+     * Is the app's bottom navigation bar on screen? Main feeds (TikTok For You,
+     * the Reels tab, the Shorts tab) show one; videos opened from search, a
+     * profile or a link usually don't. Reported in Diagnostics and the log so
+     * the two can be told apart on a real phone. Structure only: clickable
+     * elements in a row along the bottom 12 % of the window, never their text.
+     */
+    fun feedContext(root: AccessibilityNodeInfo, match: Match): String {
+        val window = Rect().also { root.getBoundsInScreen(it) }
+        if (window.isEmpty) return "unknown"
+        val band = window.bottom - (window.height() * 0.12f).toInt()
+        val centres = mutableSetOf<Int>()
+        walk(root, MAX_NODES) { node, b, _ ->
+            if (node.isClickable && b.top >= band && b.height() in 1..(window.height() / 8) &&
+                b.width() < window.width() / 3
+            ) centres += (b.centerX() * 10 / window.width()) // tenth of the width the item sits in
+            true
+        }
+        return if (centres.size >= 4) "main feed (bottom navigation, ${centres.size} items)"
+        else "no bottom navigation (search, profile or detail view?)"
+    }
+
+    /**
      * For the diagnostic log when no short-video screen is found in a tracked
      * app: the largest containers with class, view-id entry, size share,
      * scroll directions and how much their biggest child fills. No text.

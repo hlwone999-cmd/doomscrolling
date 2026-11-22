@@ -69,6 +69,8 @@ class SessionWriter(
         val duplicates: Int = 0,    // already stored for that session (ignored, not an error)
         val failures: Int = 0,      // writes that threw (any command)
         val lastError: String? = null,
+        val lastWriteAt: Long = 0L, // when the last video row was committed
+        val lastWriteMs: Long = 0L, // how long that transaction took
     )
 
     private val _stats = MutableStateFlow(WriteStats())
@@ -165,6 +167,7 @@ class SessionWriter(
                     return
                 }
                 val event = ReelEventRow(sessionId = id, at = cmd.at, itemKey = cmd.itemKey, dwellMs = cmd.dwellMs)
+                val writeStart = System.currentTimeMillis()
                 val inserted = try {
                     db.reelEvents().insert(event)
                 } catch (e: SQLiteConstraintException) {
@@ -179,7 +182,8 @@ class SessionWriter(
                 if (inserted == -1L) {
                     _stats.value = _stats.value.copy(duplicates = _stats.value.duplicates + 1)
                 } else {
-                    _stats.value = _stats.value.copy(written = _stats.value.written + 1)
+                    val done = System.currentTimeMillis()
+                    _stats.value = _stats.value.copy(written = _stats.value.written + 1, lastWriteAt = done, lastWriteMs = done - writeStart)
                 }
                 if (inserted != -1L) {
                     refreshTotal(cmd.at)

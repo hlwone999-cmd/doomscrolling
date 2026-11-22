@@ -31,6 +31,7 @@ import app.tidemark.detect.EndReason
 import app.tidemark.detect.EngineConfig
 import app.tidemark.detect.EngineSink
 import app.tidemark.detect.FeedPipeline
+import app.tidemark.detect.PageTracker
 import app.tidemark.detect.SurfaceDetector
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -238,8 +239,11 @@ class ReelService : AccessibilityService(), EngineSink {
                 if (m != null && matchPkg == pkg) {
                     if (detector.isPagerScroll(event.source, m)) {
                         val dy = if (Build.VERSION.SDK_INT >= 28) event.scrollDeltaY else 0
-                        pipeline.onPagerScroll(event.fromIndex, event.toIndex, dy, now)
+                        val kind = pipeline.onPagerScroll(event.fromIndex, event.toIndex, dy, now)
+                        DiagnosticsState.update { it.copy(lastScrollAt = now, lastScrollKind = kind.name) }
                         publishPages()
+                        // The pager reported a new adapter position: the page has changed, look now.
+                        if (kind == PageTracker.Scroll.NEW_INDEX) { scheduleProbe(0); return }
                     }
                     // Smaller scrollers (comments, captions, menus) are not a swipe;
                     // the probe still checks which page is on screen.
@@ -285,6 +289,7 @@ class ReelService : AccessibilityService(), EngineSink {
         app.writer.count(token, itemKey, at, dwellMs)
         if (token == nudgeToken) nudgeVideos++
         DiagnosticsState.update { it.copy(countedSinceConnect = it.countedSinceConnect + 1) }
+        DiagnosticsState.update { it.copy(lastCountAt = at) }
         DiagLog.add(this, "counted ${matchPkg?.let { appNames[it] } ?: "?"} $itemKey (${dwellMs} ms on screen)")
         checkNudge(at)
     }
@@ -461,7 +466,9 @@ class ReelService : AccessibilityService(), EngineSink {
         matchPkg = rule.packageName
         engine.onSurface(rule.packageName, rule.surface, now)
         if (entering) {
-            DiagLog.add(this, "surface ${rule.name}: ${found.describe()}, " +
+            val context = try { detector.feedContext(root, found) } catch (e: RuntimeException) { "unknown" }
+            DiagnosticsState.update { it.copy(feedContext = context) }
+            DiagLog.add(this, "surface ${rule.name}: ${found.describe()}, $context, " +
                 "app v${versionCodeOf(rule.packageName) ?: "?"}, verified=${rule.isVerified(versionCodeOf(rule.packageName))}")
             scheduleProbe(0)
             applyBlock()
@@ -513,6 +520,7 @@ class ReelService : AccessibilityService(), EngineSink {
                 val r = pipeline.onSettledPage(snap.signature, snap.row, now)
                 val appName = matchPkg?.let { appNames[it] } ?: "?"
                 if (r.changed) {
+                    DiagnosticsState.update { it.copy(lastPageChangeAt = now) }
                     DiagLog.add(this, "page ${pipeline.pages.previousPosition} → ${r.position} in $appName: ${r.reason}")
                 } else if (r.reason.contains("without a swipe") && now - lastRejectLog >= REJECT_LOG_MS) {
                     lastRejectLog = now

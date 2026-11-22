@@ -538,6 +538,13 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
                 DiagLine(stringResource(R.string.diag_positions),
                     "${live.previousPosition?.toString() ?: "–"} → ${live.position}")
                 DiagLine(stringResource(R.string.diag_page_decision), live.pageDecision ?: none)
+                DiagLine(stringResource(R.string.diag_feed_context), live.feedContext ?: none)
+                DiagLine(stringResource(R.string.diag_t_scroll),
+                    if (live.lastScrollAt > 0) "${clockSec(live.lastScrollAt)} · ${live.lastScrollKind}" else none)
+                DiagLine(stringResource(R.string.diag_t_page), if (live.lastPageChangeAt > 0) clockSec(live.lastPageChangeAt) else none)
+                DiagLine(stringResource(R.string.diag_t_count), if (live.lastCountAt > 0) clockSec(live.lastCountAt) else none)
+                DiagLine(stringResource(R.string.diag_t_write),
+                    if (writes.lastWriteAt > 0) "${clockSec(writes.lastWriteAt)} · ${writes.lastWriteMs} ms" else none)
                 DiagLine(stringResource(R.string.diag_counted_since), live.countedSinceConnect.toString())
                 DiagLine(stringResource(R.string.diag_write_accepted), writes.accepted.toString())
                 DiagLine(stringResource(R.string.diag_write_success), writes.written.toString())
@@ -583,6 +590,10 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
         }
     }
 }
+
+/** HH:mm:ss.SSS for diagnostics timestamps. */
+private fun clockSec(t: Long): String =
+    java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US).format(java.util.Date(t))
 
 @Composable
 private fun DiagLine(label: String, value: String, warn: Boolean = false) {

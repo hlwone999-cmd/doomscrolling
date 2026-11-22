@@ -15,7 +15,7 @@ import org.junit.Test
  * The whole counting path the service uses (pager signals -> FeedPipeline ->
  * PageTracker -> CountingEngine), with plain strings standing in for the
  * on-screen containers. Timing follows the service: a probe after the
- * swipe, then the 400 ms settle.
+ * swipe, then the 250 ms settle. The video on screen on arrival is not counted.
  */
 class FeedPipelineTest {
 
@@ -72,23 +72,22 @@ class FeedPipelineTest {
         settle(to)
     }
 
-    @Test fun firstVideoCounts() {
+    @Test fun arrivalVideoIsNotCounted() {
         settle("A")
-        assertEquals(listOf("p:0"), sink.counted)
+        assertTrue(sink.counted.isEmpty())
     }
 
-    @Test fun tenSwipesGiveTenMoreVideos() {
+    @Test fun tenSwipesGiveTenCounts() {
         settle("V0")
         for (i in 1..10) swipe("V${i - 1}", "V$i", fromIdx = i - 1, toIdx = i)
-        assertEquals(11, sink.counted.size) // the first video + one per swipe
-        assertEquals((0..10).map { "p:$it" }, sink.counted)
+        assertEquals((1..10).map { "p:$it" }, sink.counted) // one per swipe, none for the arrival video
     }
 
     @Test fun tenSwipesWithoutAdapterIndexesStillCount() {
         // Pagers that report no indexes: direction comes from the scroll delta / mid-swipe page.
         settle("V0")
         for (i in 1..10) swipe("V${i - 1}", "V$i")
-        assertEquals(11, sink.counted.size)
+        assertEquals(10, sink.counted.size)
     }
 
     @Test fun recycledContainersStillCount() {
@@ -96,7 +95,7 @@ class FeedPipelineTest {
         val views = listOf("A", "B", "C")
         settle("A")
         for (i in 1..9) swipe(views[(i - 1) % 3], views[i % 3], fromIdx = i - 1, toIdx = i)
-        assertEquals(10, sink.counted.size)
+        assertEquals(9, sink.counted.size)
     }
 
     @Test fun oneSwipeIsCountedOnce() {
@@ -107,7 +106,7 @@ class FeedPipelineTest {
         feed.onPagerScroll(1, 1, 0, now)
         settle("B"); settle("B"); settle("B")
         advance(3_000)
-        assertEquals(listOf("p:0", "p:1"), sink.counted)
+        assertEquals(listOf("p:1"), sink.counted)
     }
 
     @Test fun likeAndCommentDoNotCount() {
@@ -118,8 +117,7 @@ class FeedPipelineTest {
         settle("A"); advance(2_000)
         // Share menu / long-press menu: same page.
         settle("A")
-        assertEquals(listOf("p:0"), sink.counted)
-        assertTrue(sink.notes.any { it.contains("already counted") } || sink.counted.size == 1)
+        assertTrue(sink.counted.isEmpty())
     }
 
     @Test fun openingAProfileDoesNotCount() {
@@ -127,20 +125,29 @@ class FeedPipelineTest {
         engine.onOffSurface(now); advance(5_000)         // profile opened (short-video screen gone)
         engine.onSurface("com.zhiliaoapp.musically", "tiktok_feed", now)
         settle("A")                                       // back on the same video
-        assertEquals(listOf("p:0"), sink.counted)
+        assertTrue(sink.counted.isEmpty())
         assertTrue(sink.closed.isEmpty())                 // within the 30 s grace: same session
     }
 
-    @Test fun sameVideoIsNotCountedAgain() {
+    @Test fun openingASearchResultDoesNotCount() {
+        settle("A")
+        engine.onOffSurface(now); advance(40_000)         // searching for a while
+        engine.onSurface("com.zhiliaoapp.musically", "tiktok_feed", now)
+        feed.onNewSession()
+        settle("SearchResult")                            // the tapped result opens full screen
+        assertTrue(sink.counted.isEmpty())
+    }
+
+    @Test fun forwardAndBackDoNotRecount() {
         settle("A")
         swipe("A", "B", 0, 1)
-        // Swipe back to A, then forward to B again: both already counted.
+        // Swipe back to A, then forward to B again: both already seen.
         feed.onPagerScroll(1, 0, -900, now); advance(40)
         feed.onMidSwipe("A", "B", now); advance(40)
         feed.onPagerScroll(0, 0, -900, now); advance(150)
         settle("A")
         swipe("A", "B", 0, 1)
-        assertEquals(listOf("p:0", "p:1"), sink.counted)
+        assertEquals(listOf("p:1"), sink.counted)
     }
 
     @Test fun bounceBackIsNotANewVideo() {
@@ -148,14 +155,14 @@ class FeedPipelineTest {
         feed.onPagerScroll(0, 1, 200, now); advance(40)
         feed.onPagerScroll(0, 0, -200, now); advance(150)
         settle("A")
-        assertEquals(listOf("p:0"), sink.counted)
+        assertTrue(sink.counted.isEmpty())
     }
 
     @Test fun pageChangeWithoutAnySwipeIsNotCounted() {
         settle("A")
         // The app swapped the page container with no scroll and no mid-swipe (e.g. re-layout).
         settle("Z")
-        assertEquals(listOf("p:0"), sink.counted)
+        assertTrue(sink.counted.isEmpty())
     }
 
     @Test fun wrapperOnTopStillCountsEachSwipe() {
@@ -165,7 +172,29 @@ class FeedPipelineTest {
             feed.onPagerScroll(-1, -1, 900, now); advance(150)
             feed.onSettledPage(listOf("Wrap", "Pager", "Page$i"), null, now); advance(500)
         }
-        assertEquals((0..5).map { "p:$it" }, sink.counted)
+        assertEquals((1..5).map { "p:$it" }, sink.counted)
+    }
+
+    /** BUG-005: a probe at the very start of a swipe (old page still on screen) must not erase the swipe. */
+    @Test fun earlyProbeDoesNotEraseTheSwipe() {
+        settle("A")
+        feed.onPagerScroll(-1, -1, 300, now); advance(20)
+        feed.onSettledPage(listOf("A", "A-inner"), null, now); advance(80) // early probe: same page
+        advance(100)                                                        // swipe ends, no more events
+        feed.onSettledPage(listOf("B", "B-inner"), null, now); advance(300)
+        assertEquals(listOf("p:1"), sink.counted)
+    }
+
+    /** BUG-005: scroll events that move nothing must not hold the count back. */
+    @Test fun countLandsWithin260msOfThePageChange() {
+        settle("A")
+        feed.onPagerScroll(0, 1, 0, now); advance(40)
+        feed.onPagerScroll(1, 1, 0, now)
+        feed.onSettledPage(listOf("B", "B-inner"), null, now)
+        val t0 = now
+        repeat(10) { advance(30); feed.onPagerScroll(1, 1, 0, now) } // trailing no-op events
+        advance(260 - (now - t0))
+        assertEquals(listOf("p:1"), sink.counted)
     }
 
     @Test fun leavingTheFeedEndsTheSessionAndHidesTheOverlay() {

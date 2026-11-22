@@ -318,4 +318,9 @@
     <string name="diag_write_duplicates">Duplicates ignored (already stored)</string>
     <string name="diag_write_failures">Write failures</string>
     <string name="diag_write_last_error">Last write error</string>
+    <string name="diag_feed_context">Screen type</string>
+    <string name="diag_t_scroll">Last pager scroll event</string>
+    <string name="diag_t_page">Last page change</string>
+    <string name="diag_t_count">Last count accepted</string>
+    <string name="diag_t_write">Last database write (duration)</string>
 </resources>

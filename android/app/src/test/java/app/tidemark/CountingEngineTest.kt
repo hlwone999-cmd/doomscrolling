@@ -11,6 +11,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
+/**
+ * Engine rules (BUG-005 semantics): the video on screen when the user arrives
+ * is marked seen but not counted; each swipe to a new video counts once after
+ * settling for 250 ms. Same scenarios as replica/tests/engine_sim.py.
+ */
 class CountingEngineTest {
 
     private class FakeSink : EngineSink {
@@ -30,7 +35,7 @@ class CountingEngineTest {
         override fun overlayVisible(visible: Boolean) { overlay = visible }
     }
 
-    private val cfg = EngineConfig(settleMs = 400, graceMs = 30_000, hideDelayMs = 1_500, touchEveryMs = 5_000)
+    private val cfg = EngineConfig(settleMs = 250, graceMs = 30_000, hideDelayMs = 1_500, touchEveryMs = 5_000)
     private var day = "2026-11-21"
     private lateinit var sink: FakeSink
     private lateinit var e: CountingEngine
@@ -42,78 +47,101 @@ class CountingEngineTest {
         e = CountingEngine(cfg, sink) { day }
     }
 
-    /** Settle a key: observe it, then let settleMs pass. */
+    /** Settle a key: observe it, then let more than settleMs pass. */
     private fun settle(key: String, at: Long) {
         e.onObserve(key, at)
-        e.tick(at + cfg.settleMs)
+        e.tick(at + 400)
     }
 
-    @Test fun firstVideoCountsAfterSettle() {
+    private fun keys() = sink.counted.map { it.second }
+
+    @Test fun arrivalVideoIsNotCounted() {
         e.onSurface(ig, "reels", 0)
-        assertTrue(sink.overlay)
         e.onObserve("i:0", 10)
-        e.tick(300)
-        assertEquals(0, sink.counted.size)
-        e.tick(410)
-        assertEquals(listOf(1L to "i:0"), sink.counted)
+        e.tick(400)
+        assertTrue(sink.overlay)
+        assertTrue(sink.counted.isEmpty())
+    }
+
+    @Test fun firstSwipeCountsAfterSettle() {
+        e.onSurface(ig, "reels", 0)
+        settle("i:0", 0)
+        e.onScroll(1_000)
+        e.onObserve("i:1", 1_010)
+        e.tick(1_200)
+        assertTrue(sink.counted.isEmpty())   // not yet settled (190 ms)
+        e.tick(1_260)
+        assertEquals(listOf("i:1"), keys())  // settled after 250 ms
     }
 
     @Test fun flingPastDoesNotCount() {
         e.onSurface(ig, "reels", 0)
         e.onScroll(10)
         e.onObserve("i:1", 100)
-        e.onScroll(200)              // moved on before 400 ms
+        e.onScroll(200)
         e.onObserve("i:2", 250)
         e.onScroll(350)
         e.onObserve("i:3", 400)
         e.tick(900)
-        assertEquals(listOf(1L to "i:3"), sink.counted)
+        assertEquals(listOf("i:3"), keys())
     }
 
     @Test fun swipingBackDoesNotRecount() {
         e.onSurface(ig, "reels", 0)
-        settle("i:0", 0)
-        e.onScroll(1000); settle("i:1", 1100)
-        e.onScroll(3000); settle("i:0", 3100)   // back to the first video
-        assertEquals(listOf("i:0", "i:1"), sink.counted.map { it.second })
+        settle("i:0", 0)                         // arrival video: seen, not counted
+        e.onScroll(1_000); settle("i:1", 1_100)  // counted
+        e.onScroll(3_000); settle("i:0", 3_100)  // back to the arrival video: already seen
+        assertEquals(listOf("i:1"), keys())
     }
 
-    @Test fun keyChangeWithoutScrollDoesNotRecount() {
+    @Test fun keyChangeWithoutScrollDoesNotCount() {
         e.onSurface(ig, "reels", 0)
         settle("h:aaaaaaaaaaaaaaaa", 0)
-        // Rotation, a like, or the comments sheet changes the fingerprint; no scroll happened.
-        settle("h:bbbbbbbbbbbbbbbb", 2000)
+        e.onScroll(1_000); settle("h:cccccccccccccccc", 1_100)
+        settle("h:bbbbbbbbbbbbbbbb", 3_000)      // rotation / like / comments: no scroll
         assertEquals(1, sink.counted.size)
     }
 
     @Test fun swipeBackThenKeyChangeDoesNotCount() {
         e.onSurface(ig, "reels", 0)
         settle("h:aaaaaaaaaaaaaaaa", 0)
-        e.onScroll(1000); settle("h:cccccccccccccccc", 1100)
-        e.onScroll(2000); settle("h:aaaaaaaaaaaaaaaa", 2100) // back: uses up the scroll
-        settle("h:dddddddddddddddd", 4000)                   // same video, fingerprint drifted
-        assertEquals(2, sink.counted.size)
+        e.onScroll(1_000); settle("h:cccccccccccccccc", 1_100)
+        e.onScroll(2_000); settle("h:aaaaaaaaaaaaaaaa", 2_100)
+        settle("h:dddddddddddddddd", 4_000)
+        assertEquals(1, sink.counted.size)
     }
 
     @Test fun duplicateObservationsCountOnce() {
         e.onSurface(ig, "reels", 0)
-        repeat(5) { e.onObserve("i:7", 10L + it) }
-        e.tick(500); e.tick(900); e.tick(5000)
+        settle("i:6", 0)
+        e.onScroll(500)
+        repeat(5) { e.onObserve("i:7", 510L + it) }
+        e.tick(900); e.tick(1_300); e.tick(6_000)
         assertEquals(1, sink.counted.size)
     }
 
-    @Test fun shortLeaveKeepsSessionAndDedupe() {
+    @Test fun shortLeaveKeepsSessionAndCountsNothing() {
         e.onSurface(ig, "reels", 0)
         settle("i:0", 0)
-        e.onOffSurface(1000)          // notification shade
-        e.tick(2600)
-        assertFalse(sink.overlay)     // hidden after the 1.5 s delay
+        e.onOffSurface(1_000)          // notification shade, comments, profile
+        e.tick(2_600)
+        assertFalse(sink.overlay)      // hidden after the 1.5 s delay
         e.onSurface(ig, "reels", 10_000)
         assertTrue(sink.overlay)
-        settle("i:0", 10_000)         // same video on return
+        settle("i:0", 10_000)
         assertEquals(1, sink.opened.size)
-        assertEquals(1, sink.counted.size)
+        assertTrue(sink.counted.isEmpty())
         assertTrue(sink.closed.isEmpty())
+    }
+
+    @Test fun returningToADifferentVideoIsNotCounted() {
+        // e.g. opening a video from search or a profile: arriving is not a swipe.
+        e.onSurface(ig, "reels", 0)
+        settle("i:0", 0)
+        e.onOffSurface(1_000)
+        e.onSurface(ig, "reels", 5_000)
+        settle("i:9", 5_000)
+        assertTrue(sink.counted.isEmpty())
     }
 
     @Test fun longLeaveClosesAtLeaveTime() {
@@ -130,7 +158,7 @@ class CountingEngineTest {
     @Test fun returnAfterGraceWithoutTickStillStartsNewSession() {
         e.onSurface(ig, "reels", 0)
         e.onOffSurface(1_000)
-        e.onSurface(ig, "reels", 40_000) // tick never ran
+        e.onSurface(ig, "reels", 40_000)
         assertEquals(EndReason.LEFT_SURFACE, sink.closed.single().third)
         assertEquals(2, sink.opened.size)
     }
@@ -145,12 +173,13 @@ class CountingEngineTest {
     @Test fun mixedKeyKindsIgnoredInOneSession() {
         e.onSurface(ig, "reels", 0)
         settle("i:0", 0)
-        e.onScroll(1000); settle("h:aaaaaaaaaaaaaaaa", 1100)
-        assertEquals(1, sink.counted.size)
+        e.onScroll(1_000); settle("h:aaaaaaaaaaaaaaaa", 1_100)
+        assertTrue(sink.counted.isEmpty())
     }
 
     @Test fun nullKeyNeverCounts() {
         e.onSurface(ig, "reels", 0)
+        e.onScroll(0)
         e.onObserve(null, 0)
         e.tick(5_000)
         assertTrue(sink.counted.isEmpty())
@@ -166,12 +195,14 @@ class CountingEngineTest {
     @Test fun dayRolloverSplitsSession() {
         e.onSurface(ig, "reels", 0)
         settle("i:0", 0)
+        e.onScroll(500); settle("i:1", 500)
         day = "2026-11-22"
         e.tick(10_000)
         assertEquals(EndReason.DAY_ROLLOVER, sink.closed.single().third)
         assertEquals(2, sink.opened.size)
-        settle("i:0", 10_000)        // new session, new day: counts again by design
-        assertEquals(2, sink.counted.size)
+        settle("i:1", 10_000)                    // arrival in the new session: seen
+        e.onScroll(11_000); settle("i:2", 11_000)
+        assertEquals(listOf("i:1", "i:2"), keys())
     }
 
     /** BUG-001: a day change during the grace period must end the old session when the user left. */
@@ -187,7 +218,7 @@ class CountingEngineTest {
     @Test fun nextDeadlineTracksPendingSettle() {
         e.onSurface(ig, "reels", 1_000)
         e.onObserve("i:0", 2_000)
-        assertEquals(2_400L, e.nextDeadline())
+        assertEquals(2_250L, e.nextDeadline())
     }
 
     @Test fun stopWhenIdleDoesNothing() {
