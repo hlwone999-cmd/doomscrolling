@@ -15,7 +15,7 @@
 --   * detection rules are a bundled JSON asset (assets/detectors/v<N>.json),
 --     not a table. session.rules_version records which set counted it.
 --   * no video content, captions, usernames or creator names are stored.
---     item_key is a pager index or a salted one-way hash, never text.
+--     item_key is an adapter row (i:) or a position in the session (p:); no text is ever read.
 --
 -- Removed in revision 2 (and why):
 --   detector_rule  rules are bundled in the APK; nothing is fetched remotely.
@@ -77,9 +77,9 @@ create table reel_event (
   id             integer primary key autoincrement,
   session_id     integer not null references session(id) on delete cascade,
   at             integer not null,
-  item_key       text not null,                    -- 'i:<pager index>' or 'h:<16 hex salted hash>'
+  item_key       text not null,                    -- 'i:<adapter row>' or 'p:<position in session>' (no text is read)
   dwell_ms       integer check (dwell_ms is null or dwell_ms >= 0),
-  check (item_key like 'i:%' or item_key like 'h:%')
+  check (item_key like 'i:%' or item_key like 'p:%')
 );
 create index reel_event_at on reel_event (at);
 -- The same video is never counted twice in one session: bounce-backs, duplicate

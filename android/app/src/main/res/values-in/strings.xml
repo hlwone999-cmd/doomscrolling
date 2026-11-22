@@ -8,7 +8,7 @@
     <string name="disclosure_reads_title">Yang dibaca aplikasi</string>
     <string name="disclosure_read_1">Aplikasi yang sedang tampil, hanya untuk bereaksi pada Instagram, TikTok, dan YouTube.</string>
     <string name="disclosure_read_2">Tata letak layar video pendek, untuk mengenali saat Anda pindah ke video berikutnya.</string>
-    <string name="disclosure_read_3">Deskripsi video di layar, langsung diubah menjadi kode satu arah agar video yang sama tidak dihitung dua kali. Teksnya tidak pernah disimpan.</string>
+    <string name="disclosure_read_3">Posisi video di layar (pertama, kedua, ketiga...), agar video yang sama tidak dihitung dua kali. Tidak ada teks di layar yang dibaca: tidak ada caption, nama, atau pesan.</string>
     <string name="disclosure_read_4">Peristiwa scroll di aplikasi tersebut.</string>
     <string name="disclosure_never_title">Yang tidak pernah dilakukan</string>
     <string name="disclosure_never_1">Menyimpan atau mengirim isi video, caption, nama pengguna, atau pesan.</string>
@@ -65,8 +65,6 @@
     <string name="settings_design">Sistem desain (developer)</string>
 
     <string name="design_title">Sistem desain</string>
-    <string name="design_seed">Tambah data contoh</string>
-    <string name="design_seeded">Data contoh ditambahkan</string>
     <string name="back">Kembali</string>
 
     <!-- Full feature set (added after the slice). -->
@@ -287,4 +285,19 @@
     <string name="settings_licenses">Lisensi sumber terbuka</string>
     <string name="licenses_intro">Tidemark memakai huruf Inter oleh The Inter Project Authors, dengan SIL Open Font License 1.1:</string>
     <string name="about_tagline">Lihat seberapa jauh Anda scroll. Lalu biarkan surut.</string>
+    <string name="design_samples_note">Nilai contoh hanya untuk memeriksa tata letak. Ini bukan data Anda dan tidak pernah disimpan.</string>
+
+    <!-- Live diagnostics -->
+    <string name="diag_live">Status langsung</string>
+    <string name="diag_connected">Layanan aksesibilitas terhubung</string>
+    <string name="diag_yes_since">ya, sejak %1$s</string>
+    <string name="diag_no">tidak</string>
+    <string name="diag_foreground">Aplikasi di depan saat ini</string>
+    <string name="diag_last_event">Peristiwa aksesibilitas terakhir</string>
+    <string name="diag_surface">Layar video pendek yang terdeteksi</string>
+    <string name="diag_last_reason">Keputusan hitung terakhir</string>
+    <string name="diag_counted_since">Video terhitung sejak layanan terhubung</string>
+    <string name="diag_total_real">Total video terhitung (database)</string>
+    <string name="diag_none">belum ada</string>
+    <string name="diag_live_note">Buka Reels, Shorts, atau TikTok, scroll beberapa video, lalu kembali ke sini. Yang ditampilkan hanya detail teknis: nama aplikasi, jenis peristiwa, dan struktur layar, bukan isi layar.</string>
 </resources>

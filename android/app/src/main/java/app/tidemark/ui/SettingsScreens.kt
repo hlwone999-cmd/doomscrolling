@@ -78,6 +78,7 @@ import app.tidemark.design.Space
 import app.tidemark.design.StepperRow
 import app.tidemark.design.SwitchRow
 import app.tidemark.design.ThemeMode
+import app.tidemark.service.DiagnosticsState
 import app.tidemark.service.ServiceStatus
 import java.time.LocalDate
 import kotlinx.coroutines.Dispatchers
@@ -514,6 +515,29 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
         verticalArrangement = Arrangement.spacedBy(Space.md),
     ) {
         ScreenHeader(stringResource(R.string.diag_title), onBack)
+
+        // Live status from the running service (memory only, technical metadata).
+        val live by DiagnosticsState.state.collectAsStateWithLifecycle()
+        val realTotal by graph.db.reelEvents().countAll().collectAsStateWithLifecycle(0)
+        val none = stringResource(R.string.diag_none)
+        SectionTitle(stringResource(R.string.diag_live))
+        AppCard(Modifier.fillMaxWidth()) {
+            Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+                DiagLine(stringResource(R.string.diag_connected),
+                    if (live.connected) stringResource(R.string.diag_yes_since, clock(live.connectedAt)) else stringResource(R.string.diag_no),
+                    warn = !live.connected)
+                DiagLine(stringResource(R.string.diag_foreground), live.foregroundPackage ?: none)
+                DiagLine(stringResource(R.string.diag_last_event),
+                    live.lastEvent?.let { "$it · ${clock(live.lastEventAt)}" } ?: none)
+                DiagLine(stringResource(R.string.diag_surface), live.surface ?: none, warn = live.surface?.startsWith("none") == true)
+                DiagLine(stringResource(R.string.diag_last_reason),
+                    live.lastReason?.let { "$it · ${clock(live.lastReasonAt)}" } ?: none)
+                DiagLine(stringResource(R.string.diag_counted_since), live.countedSinceConnect.toString())
+                DiagLine(stringResource(R.string.diag_total_real), realTotal.toString())
+                Text(stringResource(R.string.diag_live_note), style = AppType.bodySm, color = c.textMuted)
+            }
+        }
+
         SectionTitle(stringResource(R.string.diag_detection))
         AppCard(Modifier.fillMaxWidth()) {
             Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
@@ -546,6 +570,15 @@ fun DiagnosticsScreen(onBack: () -> Unit) {
             }, variant = ButtonVariant.SECONDARY, enabled = lines.isNotEmpty())
             AppButton(stringResource(R.string.diag_clear), { DiagLog.clear(context); refresh++ }, variant = ButtonVariant.GHOST)
         }
+    }
+}
+
+@Composable
+private fun DiagLine(label: String, value: String, warn: Boolean = false) {
+    val c = LocalAppColors.current
+    Column {
+        Text(label, style = AppType.labelSm, color = c.textMuted)
+        Text(value, style = AppType.bodySm.copy(fontFamily = FontFamily.Monospace), color = if (warn) c.warning else c.text)
     }
 }
 

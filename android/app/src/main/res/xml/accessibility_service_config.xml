@@ -5,11 +5,14 @@
   No packageNames filter: window-state events from other apps (launcher,
   system UI) are how we know the user left a short-video screen. Events from
   untracked apps are dropped on the first line of onAccessibilityEvent.
+  flagRetrieveInteractiveWindows: lets the service read the tracked app's
+  window via getWindows() when rootInActiveWindow is empty (seen on some
+  OEM builds). Structure only; no text is read.
 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeViewScrolled"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:accessibilityFlags="flagReportViewIds|flagIncludeNotImportantViews"
+    android:accessibilityFlags="flagReportViewIds|flagIncludeNotImportantViews|flagRetrieveInteractiveWindows"
     android:canRetrieveWindowContent="true"
     android:description="@string/a11y_service_description"
     android:isAccessibilityTool="false"

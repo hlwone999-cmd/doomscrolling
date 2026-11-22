@@ -32,7 +32,6 @@ import androidx.compose.ui.text.font.FontWeight
 import app.tidemark.R
 import app.tidemark.app
 import app.tidemark.core.Severity
-import app.tidemark.data.DemoData
 import app.tidemark.design.AppBanner
 import app.tidemark.design.AppButton
 import app.tidemark.design.AppCard
@@ -56,14 +55,15 @@ import kotlinx.coroutines.launch
 // S08, S11 and S14 moved to StatsScreens.kt, GoalsScreens.kt and SettingsScreens.kt.
 // This file keeps the developer design screen.
 
-/** Developer screen: every primitive in the current theme, plus demo data. */
+/**
+ * Developer screen: every UI primitive in the current theme. The numbers here
+ * are fixed layout samples for checking the components; they are never
+ * written to the database and never appear in statistics.
+ */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun DesignScreen(onBack: () -> Unit) {
     val c = LocalAppColors.current
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var seeded by remember { mutableStateOf(false) }
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(Space.md),
@@ -73,6 +73,7 @@ fun DesignScreen(onBack: () -> Unit) {
             AppButton(stringResource(R.string.back), onBack, variant = ButtonVariant.GHOST)
             Text(stringResource(R.string.design_title), style = AppType.title.copy(fontWeight = FontWeight.Bold), color = c.text)
         }
+        AppBanner(BannerKind.INFO, stringResource(R.string.design_samples_note))
 
         SectionTitle("Buttons")
         FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.xs), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
@@ -121,12 +122,5 @@ fun DesignScreen(onBack: () -> Unit) {
         SectionTitle("Empty state")
         EmptyState(AppIcons.Stats, "No videos counted in this period", "Data appears after your first session.")
 
-        SectionTitle("Demo data")
-        AppButton(
-            stringResource(if (seeded) R.string.design_seeded else R.string.design_seed),
-            { scope.launch { DemoData.insertToday(context.app.db); seeded = true } },
-            enabled = !seeded,
-            variant = ButtonVariant.SECONDARY,
-        )
     }
 }

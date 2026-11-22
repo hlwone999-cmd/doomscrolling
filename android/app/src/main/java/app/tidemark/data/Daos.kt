@@ -95,6 +95,48 @@ interface SessionDao {
     suspend fun deleteAllClosed(): Int
 }
 
+/** A (day, app) pair whose daily total must be rebuilt. */
+data class DayPackage(
+    @androidx.room.ColumnInfo(name = "day_key") val dayKey: String,
+    @androidx.room.ColumnInfo(name = "package") val packageName: String,
+)
+
+/**
+ * Removes the sample rows an earlier build's developer "Insert demo data"
+ * button wrote (rules_version 0, keys "i:demo-..."), then rebuilds the daily
+ * totals of the affected days from real sessions only.
+ */
+@Dao
+interface DemoPurgeDao {
+    @Query(
+        """SELECT DISTINCT s.id FROM session s
+           WHERE s.rules_version = 0
+              OR EXISTS (SELECT 1 FROM reel_event r WHERE r.session_id = s.id AND r.item_key LIKE 'i:demo-%')"""
+    )
+    suspend fun demoSessionIds(): List<Long>
+
+    @Query("SELECT DISTINCT day_key, package FROM session WHERE id IN (:ids)")
+    suspend fun daysOf(ids: List<Long>): List<DayPackage>
+
+    @Query("DELETE FROM session WHERE id IN (:ids)")
+    suspend fun deleteSessions(ids: List<Long>): Int
+
+    @Query(
+        """INSERT OR REPLACE INTO daily_stat (day_key, package, reels, active_ms, sessions, updated_at)
+           SELECT :day, :pkg,
+                  (SELECT COUNT(*) FROM reel_event r JOIN session s ON s.id = r.session_id
+                    WHERE s.day_key = :day AND s.package = :pkg),
+                  (SELECT COALESCE(SUM(active_ms), 0) FROM session
+                    WHERE day_key = :day AND package = :pkg AND ended_at IS NOT NULL),
+                  (SELECT COUNT(*) FROM session WHERE day_key = :day AND package = :pkg),
+                  :now"""
+    )
+    suspend fun rebuildDay(day: String, pkg: String, now: Long)
+
+    @Query("DELETE FROM daily_stat WHERE reels = 0 AND active_ms = 0 AND sessions = 0")
+    suspend fun dropEmptyDays(): Int
+}
+
 @Dao
 interface ReelEventDao {
     /** Returns -1 when the (session_id, item_key) pair already exists. */
@@ -107,6 +149,10 @@ interface ReelEventDao {
            AND session_id NOT IN (SELECT id FROM session WHERE is_open = 1)"""
     )
     suspend fun pruneBefore(cutoff: Long): Int
+
+    /** Every video counted from real activity (demo rows are purged on start). */
+    @Query("SELECT COUNT(*) FROM reel_event")
+    fun countAll(): Flow<Int>
 
     /** Event times for a day's hourly chart (times only, never keys). */
     @Query(

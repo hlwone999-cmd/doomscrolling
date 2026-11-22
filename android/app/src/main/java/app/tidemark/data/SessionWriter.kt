@@ -50,6 +50,7 @@ class SessionWriter(
         data class DeleteDays(val fromDay: String, val toDay: String, val done: CompletableDeferred<Unit>) : Cmd
         data class DeleteAll(val done: CompletableDeferred<Unit>) : Cmd
         data class Import(val rows: List<DailyStatRow>, val done: CompletableDeferred<Int>) : Cmd
+        data object PurgeDemo : Cmd
     }
 
     /** What an engine token needs to (re)create its row after a delete. */
@@ -105,6 +106,9 @@ class SessionWriter(
     fun closeDangling(now: Long = System.currentTimeMillis()) = send(Cmd.CloseDangling(now))
     fun refreshToday(now: Long = System.currentTimeMillis()) = send(Cmd.Refresh(now))
     fun recordBlocked(goalId: Long, now: Long = System.currentTimeMillis()) = send(Cmd.RecordBlocked(goalId, now))
+
+    /** Remove sample rows left by an older build's demo button; statistics then come from real activity only. */
+    fun purgeDemoData() = send(Cmd.PurgeDemo)
 
     // ---- user actions (suspend until done) ----
 
@@ -207,6 +211,21 @@ class SessionWriter(
                 _reelsGoal.value = null
                 context.app.widgets.refresh()
                 cmd.done.complete(Unit)
+            }
+            is Cmd.PurgeDemo -> {
+                val ids = db.demoPurge().demoSessionIds()
+                if (ids.isNotEmpty()) {
+                    db.withTransaction {
+                        val days = db.demoPurge().daysOf(ids)
+                        db.demoPurge().deleteSessions(ids)
+                        val now = System.currentTimeMillis()
+                        days.forEach { db.demoPurge().rebuildDay(it.dayKey, it.packageName, now) }
+                        db.demoPurge().dropEmptyDays()
+                    }
+                    DiagLog.add(context, "removed ${ids.size} sample session(s) from an older build")
+                    refreshTotal(System.currentTimeMillis())
+                    context.app.widgets.refresh()
+                }
             }
             is Cmd.Import -> {
                 val known = db.trackedApps().enabled().map { it.packageName }.toSet() +

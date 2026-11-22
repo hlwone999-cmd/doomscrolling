@@ -23,6 +23,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun reelEvents(): ReelEventDao
     abstract fun stats(): StatsDao
     abstract fun goals(): GoalDao
+    abstract fun demoPurge(): DemoPurgeDao
 
     companion object {
         const val NAME = "tidemark.db"

@@ -45,6 +45,8 @@ class App : Application() {
     override fun onCreate() {
         super.onCreate()
         Notifications.createChannels(this)
+        // Older builds had a developer button that wrote sample sessions; remove them.
+        writer.purgeDemoData()
         appScope.launch {
             prefs.resetHour.collect { resetHour = it }
         }

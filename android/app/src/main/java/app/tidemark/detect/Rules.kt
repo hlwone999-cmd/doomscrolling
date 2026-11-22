@@ -7,7 +7,8 @@ data class AppRule(
     val packageName: String,
     val name: String,
     val surface: String,
-    val pagerIds: Set<String>,
+    /** View-id fragments (lowercase) that raise confidence; never sufficient on their own. */
+    val pagerIdHints: List<String>,
     val genericFallback: Boolean,
     /** Target-app versionCode ranges that passed the device test protocol. */
     val verifiedVersions: List<LongRange>,
@@ -15,6 +16,13 @@ data class AppRule(
     /** Unknown version (app not installed) is never "verified". */
     fun isVerified(versionCode: Long?): Boolean =
         versionCode != null && verifiedVersions.any { versionCode in it }
+
+    /** True when the entry name of a view id ("pkg:id/clips_viewer_pager") contains a hint. */
+    fun hintMatches(viewId: String?): Boolean {
+        if (viewId == null || pagerIdHints.isEmpty()) return false
+        val entry = viewId.substringAfter(":id/").lowercase()
+        return pagerIdHints.any { entry.contains(it) }
+    }
 }
 
 data class Rules(val version: Int, val settleMs: Long, val apps: Map<String, AppRule>) {
@@ -32,8 +40,8 @@ data class Rules(val version: Int, val settleMs: Long, val apps: Map<String, App
             val arr = root.getJSONArray("apps")
             val apps = (0 until arr.length()).associate { i ->
                 val o = arr.getJSONObject(i)
-                val ids = o.optJSONArray("pagerIds")
-                val idSet = if (ids == null) emptySet() else (0 until ids.length()).map { ids.getString(it) }.toSet()
+                val hints = o.optJSONArray("pagerIdHints")
+                val hintList = if (hints == null) emptyList() else (0 until hints.length()).map { hints.getString(it).lowercase() }
                 val vv = o.optJSONArray("verifiedVersions")
                 val ranges = if (vv == null) emptyList() else (0 until vv.length()).map {
                     val r = vv.getJSONObject(it)
@@ -43,7 +51,7 @@ data class Rules(val version: Int, val settleMs: Long, val apps: Map<String, App
                     packageName = o.getString("package"),
                     name = o.getString("name"),
                     surface = o.getString("surface"),
-                    pagerIds = idSet,
+                    pagerIdHints = hintList,
                     genericFallback = o.optBoolean("genericFallback", true),
                     verifiedVersions = ranges,
                 )

@@ -10,6 +10,8 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import androidx.core.content.ContextCompat
 import app.tidemark.MainActivity
 import app.tidemark.app
@@ -28,6 +30,7 @@ import app.tidemark.detect.CountingEngine
 import app.tidemark.detect.EndReason
 import app.tidemark.detect.EngineConfig
 import app.tidemark.detect.EngineSink
+import app.tidemark.detect.PositionTracker
 import app.tidemark.detect.SurfaceDetector
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -61,7 +64,9 @@ class ReelService : AccessibilityService(), EngineSink {
     private lateinit var block: BlockScreen
 
     // Settings mirrored from DataStore / Room.
-    private var salt: ByteArray? = null
+    private val tracker = PositionTracker<AccessibilityNodeInfo>()
+    private var lastKey: String? = null
+    private val lastCandidateLog = HashMap<String, Long>()
     private var consent = false
     private var pausedUntil = 0L
     private var enabledApps: Set<String> = emptySet()
@@ -124,6 +129,9 @@ class ReelService : AccessibilityService(), EngineSink {
         // Anything the previous process left open ends at its last activity.
         a.writer.closeDangling()
         DiagLog.add(this, "service connected (rules v${a.rules.version})")
+        DiagnosticsState.update {
+            DiagnosticsState.Snapshot(connected = true, connectedAt = System.currentTimeMillis())
+        }
         Notifications.cancelStopped(this)
         engine = CountingEngine(EngineConfig(settleMs = a.rules.settleMs), sink = this, dayKeyOf = { a.dayKey(it) })
         overlay = OverlayController(
@@ -144,7 +152,6 @@ class ReelService : AccessibilityService(), EngineSink {
             onBreathe = { block.dismiss(); performGlobalAction(GLOBAL_ACTION_HOME); openApp("breathe") },
         )
 
-        scope.launch { salt = a.prefs.salt() }
         scope.launch {
             a.prefs.disclosure.collectLatest {
                 consent = it == DisclosureState.ACCEPTED
@@ -182,9 +189,10 @@ class ReelService : AccessibilityService(), EngineSink {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null || !::engine.isInitialized) return
-        if (!counting()) return
         val pkg = event.packageName?.toString() ?: return
         if (pkg == packageName) return // our own overlays and screens
+        recordEvent(event.eventType, pkg)
+        if (!counting()) return
         val rule = app.rules.forPackage(pkg)?.takeIf { pkg in enabledApps }
         val now = now()
         if (block.isShown && rule != null) {
@@ -223,8 +231,9 @@ class ReelService : AccessibilityService(), EngineSink {
             AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
                 if (rule == null) return
                 val m = match
-                if (m != null && matchPkg == pkg && detector.isPagerScroll(event.source, m)) {
-                    engine.onScroll(now)
+                if (m != null && matchPkg == pkg) {
+                    if (detector.isPagerScroll(event.source, m)) engine.onScroll(now)
+                    // Inner or custom scrollers: the probe confirms a page change structurally.
                     scheduleProbe(PROBE_AFTER_SCROLL_MS)
                 } else if (m == null && now - lastContentCheck >= CONTENT_THROTTLE_MS) {
                     lastContentCheck = now
@@ -253,11 +262,15 @@ class ReelService : AccessibilityService(), EngineSink {
     override fun openSession(token: Long, pkg: String, surface: String, at: Long) {
         app.writer.open(token, pkg, surface, at, app.rules.version, versionCodeOf(pkg))
         nudgeToken = token; nudgeVideos = 0; nudgeSent = false
+        tracker.reset()
+        lastKey = null
     }
 
     override fun countVideo(token: Long, itemKey: String, at: Long, dwellMs: Long) {
         app.writer.count(token, itemKey, at, dwellMs)
         if (token == nudgeToken) nudgeVideos++
+        DiagnosticsState.update { it.copy(countedSinceConnect = it.countedSinceConnect + 1) }
+        DiagLog.add(this, "counted ${matchPkg?.let { appNames[it] } ?: "?"} $itemKey (${dwellMs} ms on screen)")
         checkNudge(at)
     }
 
@@ -269,6 +282,8 @@ class ReelService : AccessibilityService(), EngineSink {
     override fun closeSession(token: Long, endedAt: Long, activeMs: Long, reason: EndReason) {
         app.writer.close(token, endedAt, activeMs, reason.db)
     }
+
+    override fun note(reason: String) = setReason(reason)
 
     override fun overlayVisible(visible: Boolean) {
         engineWantsOverlay = visible
@@ -361,28 +376,68 @@ class ReelService : AccessibilityService(), EngineSink {
     // ---- detection ----
 
     private fun counting(): Boolean {
-        if (!consent || salt == null) return false
-        if (pausedUntil > System.currentTimeMillis()) return false
+        if (!consent) { setReason("not counting: data disclosure not accepted"); return false }
+        if (pausedUntil > System.currentTimeMillis()) { setReason("not counting: paused"); return false }
         return true
     }
 
+    private fun recordEvent(type: Int, pkg: String) {
+        DiagnosticsState.update {
+            it.copy(
+                foregroundPackage = if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) pkg else it.foregroundPackage ?: pkg,
+                lastEvent = "${AccessibilityEvent.eventTypeToString(type)} · $pkg",
+                lastEventAt = System.currentTimeMillis(),
+                eventsSinceConnect = it.eventsSinceConnect + 1,
+            )
+        }
+    }
+
+    private fun setReason(reason: String) {
+        DiagnosticsState.update { it.copy(lastReason = reason, lastReasonAt = System.currentTimeMillis()) }
+    }
+
+    /**
+     * The tracked app's window. rootInActiveWindow can be null or point at
+     * another window on some phones (overlays, split screen, OEM launchers),
+     * so fall back to the interactive window list.
+     */
+    private fun rootFor(pkg: String): AccessibilityNodeInfo? {
+        rootInActiveWindow?.takeIf { it.packageName?.toString() == pkg }?.let { return it }
+        return try {
+            windows.firstOrNull {
+                it.type == AccessibilityWindowInfo.TYPE_APPLICATION && it.root?.packageName?.toString() == pkg
+            }?.root
+        } catch (e: RuntimeException) {
+            null
+        }
+    }
+
     private fun evaluate(rule: AppRule, now: Long) {
-        val root = rootInActiveWindow
-        if (root == null || root.packageName?.toString() != rule.packageName) {
+        val root = rootFor(rule.packageName)
+        if (root == null) {
+            DiagnosticsState.update { it.copy(surface = "${rule.name}: window not readable") }
             leaveSurface(now)
             return
         }
         val found = detector.find(root, rule)
         if (found == null) {
+            DiagnosticsState.update { it.copy(surface = "none in ${rule.name}") }
+            val last = lastCandidateLog[rule.packageName] ?: 0L
+            if (now - last >= CANDIDATE_LOG_MS) {
+                lastCandidateLog[rule.packageName] = now
+                // Structure only (class, view-id entry, size, scroll directions): never text.
+                DiagLog.add(this, "no short-video screen in ${rule.name}: ${detector.describeCandidates(root)}")
+            }
             leaveSurface(now)
             return
         }
+        DiagnosticsState.update { it.copy(surface = "${rule.name}: ${found.describe()}") }
         val entering = match == null || matchPkg != rule.packageName || !engine.isOnSurface
         match = found
         matchPkg = rule.packageName
         engine.onSurface(rule.packageName, rule.surface, now)
         if (entering) {
-            DiagLog.add(this, "surface ${rule.name}: ${if (found.byId) "by id" else "generic fallback"}, " +
+            DiagLog.add(this, "surface ${rule.name}: ${found.describe()}, " +
                 "app v${versionCodeOf(rule.packageName) ?: "?"}, verified=${rule.isVerified(versionCodeOf(rule.packageName))}")
             scheduleProbe(0)
             applyBlock()
@@ -407,14 +462,23 @@ class ReelService : AccessibilityService(), EngineSink {
 
     private fun probe() {
         val m = match ?: return
-        val pkg = matchPkg ?: return
-        val s = salt ?: return
-        val key = try {
-            detector.currentItemKey(m, pkg, s)
+        val now = now()
+        val keyed = try {
+            detector.currentItem(m)?.let { detector.keyFor(it, tracker) }
         } catch (e: RuntimeException) {
             null // node went stale mid-read
         }
-        engine.onObserve(key, now())
+        if (keyed == null) {
+            engine.onObserve(null, now) // mid-swipe or still loading: never counts
+        } else {
+            val (key, moved) = keyed
+            val prev = lastKey
+            // A page change confirmed by structure is a swipe, for apps whose
+            // pager doesn't send scroll events itself.
+            if (moved || (prev != null && key != prev)) engine.onScroll(now)
+            lastKey = key
+            engine.onObserve(key, now)
+        }
         schedule()
     }
 
@@ -449,6 +513,7 @@ class ReelService : AccessibilityService(), EngineSink {
         if (!::engine.isInitialized || isShutDown) return
         isShutDown = true
         DiagLog.add(this, "service stopping")
+        DiagnosticsState.update { it.copy(connected = false, surface = null) }
         handler.removeCallbacksAndMessages(null)
         engine.stop(now(), EndReason.SERVICE_STOPPED)
         overlay.destroy()
@@ -472,5 +537,6 @@ class ReelService : AccessibilityService(), EngineSink {
         const val CONTENT_THROTTLE_MS = 600L
         const val PROBE_AFTER_SCROLL_MS = 150L
         const val HEARTBEAT_MS = 5 * 60_000L
+        const val CANDIDATE_LOG_MS = 30_000L
     }
 }

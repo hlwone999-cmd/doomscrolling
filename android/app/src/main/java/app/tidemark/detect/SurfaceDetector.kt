@@ -8,100 +8,176 @@ import app.tidemark.core.ItemKeys
 
 /**
  * Finds the short-video pager on screen and the video currently filling it.
- * Matches structure only (ids, class names, sizes, scroll direction).
  *
- * Detection order:
- *   1. a node whose view id is in the app's bundled pagerIds and fills the window
- *   2. generic fallback: a vertical RecyclerView/ViewPager that fills the window
- *      and whose current child fills the pager (a feed's posts don't)
+ * Reads structure only: bounds, class names, view ids, scroll actions and
+ * collection positions. It never reads text, content descriptions, captions,
+ * usernames or messages.
  *
- * Every threshold here is a first guess to tune on real devices (accuracy.md).
+ * A short-video screen is a container that
+ *   - fills the window (>= 80 % height, >= 90 % width),
+ *   - is pager-like (scrollable, has vertical scroll/page actions, or is a
+ *     RecyclerView/ViewPager), and not horizontal-only (Stories, carousels),
+ *   - has a current child that fills it (>= 95 % of its height): one video per
+ *     page. A feed (Instagram Home, YouTube Home) fails this: its items are
+ *     shorter than the screen.
+ * A view-id hint from the rules (e.g. "clips_viewer") makes a candidate win,
+ * but the structure must still match, so a wrong id guess can't count.
  */
 class SurfaceDetector {
 
-    class Match(val pager: AccessibilityNodeInfo, val bounds: Rect, val byId: Boolean)
+    class Match(
+        val pager: AccessibilityNodeInfo,
+        val bounds: Rect,
+        val byHint: Boolean,
+        val className: String,
+        val viewId: String?,
+    ) {
+        /** For diagnostics only: class and id entry, never text. */
+        fun describe(): String =
+            "${className.substringAfterLast('.')}${viewId?.let { " #" + it.substringAfter(":id/") } ?: ""}" +
+                if (byHint) " (id hint)" else " (structure)"
+    }
+
+    /** The item on screen: its key and the container identity used by PositionTracker. */
+    class CurrentItem(val node: AccessibilityNodeInfo, val order: List<AccessibilityNodeInfo>, val row: Int?)
 
     fun find(root: AccessibilityNodeInfo, rule: AppRule): Match? {
         val window = Rect().also { root.getBoundsInScreen(it) }
         if (window.isEmpty) return null
-        var generic: Match? = null
-        val queue = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>()
-        queue.addLast(root to 0)
-        var visited = 0
-        while (queue.isNotEmpty() && visited < MAX_NODES) {
-            val (node, depth) = queue.removeFirst()
-            visited++
-            if (!node.isVisibleToUser) continue
-            val bounds = Rect().also { node.getBoundsInScreen(it) }
-            val id = node.viewIdResourceName
-            if (id != null && id in rule.pagerIds && fillsWindow(bounds, window)) {
-                return Match(node, bounds, byId = true)
-            }
-            if (generic == null && rule.genericFallback && isGenericPager(node, bounds, window)) {
-                generic = Match(node, bounds, byId = false) // keep looking for an id match
-            }
-            if (depth < MAX_DEPTH) {
-                for (i in 0 until node.childCount) node.getChild(i)?.let { queue.addLast(it to depth + 1) }
-            }
+        var best: Match? = null
+        walk(root, MAX_NODES) { node, bounds ->
+            if (!fillsWindow(bounds, window)) return@walk true
+            val hint = rule.hintMatches(node.viewIdResourceName)
+            if (!hint && !rule.genericFallback) return@walk true
+            if (!isPagerLike(node) || isHorizontalOnly(node)) return@walk true
+            if (!hasFullPageChild(node)) return@walk true
+            val m = Match(node, bounds, hint, node.className?.toString() ?: "?", node.viewIdResourceName)
+            if (hint) { best = m; return@walk false } // stop: hinted structural match
+            if (best == null) best = m               // keep the outermost structural match
+            true
         }
-        return generic
+        return best
     }
 
-    /** True when a scroll event came from the pager itself (not a caption or a chip row inside it). */
+    /** True when a scroll event came from the pager or a container of the same size. */
     fun isPagerScroll(source: AccessibilityNodeInfo?, match: Match): Boolean {
         if (source == null) return false
         val b = Rect().also { source.getBoundsInScreen(it) }
         return b.height() >= match.bounds.height() * 0.8f && b.width() >= match.bounds.width() * 0.9f
     }
 
-    /**
-     * Dedupe key of the video filling the pager, or null when it cannot tell
-     * (mid-swipe, still loading). Null never counts: undercount beats double count.
-     */
-    fun currentItemKey(match: Match, pkg: String, salt: ByteArray): String? {
+    /** The child filling the pager, with the children order for PositionTracker. Null mid-swipe. */
+    fun currentItem(match: Match): CurrentItem? {
         if (!match.pager.refresh()) return null
         val list = listNode(match.pager)
         val listBounds = Rect().also { list.getBoundsInScreen(it) }
-        val item = currentItem(list, listBounds) ?: return null
+        val children = (0 until list.childCount).mapNotNull { list.getChild(it) }
+        var best: AccessibilityNodeInfo? = null
+        var bestVisible = 0
+        val r = Rect()
+        for (child in children) {
+            child.getBoundsInScreen(r)
+            if (!r.intersect(listBounds)) continue
+            if (r.height() > bestVisible) { bestVisible = r.height(); best = child }
+        }
+        // Mid-swipe two pages share the screen; wait until one fills >= 85 %.
+        if (best == null || bestVisible < listBounds.height() * 0.85f) return null
+        val row = best.collectionItemInfo?.rowIndex?.takeIf { it >= 0 }
+        return CurrentItem(best, children, row)
+    }
 
-        val row = item.collectionItemInfo?.rowIndex ?: -1
-        if (row >= 0) return ItemKeys.index(row)
+    /** Key for the engine: adapter row when the app exposes it, else the tracked position. */
+    fun keyFor(item: CurrentItem, tracker: PositionTracker<AccessibilityNodeInfo>): Pair<String, Boolean> {
+        val row = item.row
+        if (row != null) return ItemKeys.index(row) to false
+        val (pos, moved) = tracker.update(item.node, item.order)
+        return "p:$pos" to moved
+    }
 
-        val parts = collectStableText(item)
-        if (parts.isEmpty()) return null
-        return ItemKeys.hash(salt, pkg + "\u0000" + parts.joinToString("\u0001"))
+    /**
+     * For the diagnostic log when no short-video screen is found in a tracked
+     * app: the largest containers with class, view-id entry, size share,
+     * scroll directions and how much their biggest child fills. No text.
+     */
+    fun describeCandidates(root: AccessibilityNodeInfo): String {
+        val window = Rect().also { root.getBoundsInScreen(it) }
+        if (window.isEmpty) return "window has no bounds"
+        val rows = mutableListOf<Pair<Int, String>>()
+        walk(root, MAX_NODES) { node, b ->
+            if (b.height() < window.height() * 0.5f || node.childCount == 0) return@walk true
+            val area = b.width() * b.height()
+            val dirs = buildString {
+                val ids = node.actionList.map { it.id }.toSet()
+                if (AccessibilityAction.ACTION_SCROLL_UP.id in ids || AccessibilityAction.ACTION_SCROLL_DOWN.id in ids) append("V")
+                if (AccessibilityAction.ACTION_SCROLL_LEFT.id in ids || AccessibilityAction.ACTION_SCROLL_RIGHT.id in ids) append("H")
+                if (AccessibilityAction.ACTION_SCROLL_FORWARD.id in ids) append("F")
+                if (AccessibilityAction.ACTION_SCROLL_BACKWARD.id in ids) append("B")
+                if (node.isScrollable) append("s")
+            }
+            val ci = node.collectionInfo?.let { " rows=${it.rowCount} cols=${it.columnCount}" } ?: ""
+            rows += area to "${node.className?.toString()?.substringAfterLast('.')}" +
+                (node.viewIdResourceName?.let { " #" + it.substringAfter(":id/") } ?: "") +
+                " h=${b.height() * 100 / window.height()}% w=${b.width() * 100 / window.width()}%" +
+                " child=${maxChildFillPct(listNode(node))}% dirs=$dirs$ci"
+            true
+        }
+        return rows.sortedByDescending { it.first }.take(6).joinToString(" | ") { it.second }.ifEmpty { "no large containers" }
+    }
+
+    // ---- structure helpers ----
+
+    /** Breadth-first walk over visible nodes; [visit] returns false to stop. */
+    private inline fun walk(root: AccessibilityNodeInfo, limit: Int, visit: (AccessibilityNodeInfo, Rect) -> Boolean) {
+        val queue = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>()
+        queue.addLast(root to 0)
+        var visited = 0
+        while (queue.isNotEmpty() && visited < limit) {
+            val (node, depth) = queue.removeFirst()
+            visited++
+            if (!node.isVisibleToUser) continue
+            val b = Rect().also { node.getBoundsInScreen(it) }
+            if (!visit(node, b)) return
+            if (depth < MAX_DEPTH) {
+                for (i in 0 until node.childCount) node.getChild(i)?.let { queue.addLast(it to depth + 1) }
+            }
+        }
     }
 
     private fun fillsWindow(b: Rect, window: Rect): Boolean =
         b.height() >= window.height() * 0.8f && b.width() >= window.width() * 0.9f
 
-    private fun isGenericPager(node: AccessibilityNodeInfo, bounds: Rect, window: Rect): Boolean {
-        if (!node.isScrollable) return false
-        val cls = node.className?.toString() ?: return false
-        if (!cls.contains("RecyclerView") && !cls.contains("ViewPager")) return false
-        if (!fillsWindow(bounds, window)) return false
-        if (!isVertical(node)) return false
-        val list = listNode(node)
-        val listBounds = Rect().also { list.getBoundsInScreen(it) }
-        val item = currentItem(list, listBounds) ?: return false
-        val itemBounds = Rect().also { item.getBoundsInScreen(it) }
-        return itemBounds.height() >= listBounds.height() * 0.9f
+    private fun isPagerLike(node: AccessibilityNodeInfo): Boolean {
+        if (node.isScrollable) return true
+        val cls = node.className?.toString().orEmpty()
+        if (cls.contains("RecyclerView") || cls.contains("ViewPager")) return true
+        val ids = node.actionList.map { it.id }.toSet()
+        return verticalActions().any { it in ids } ||
+            AccessibilityAction.ACTION_SCROLL_FORWARD.id in ids || AccessibilityAction.ACTION_SCROLL_BACKWARD.id in ids
     }
 
-    private fun isVertical(node: AccessibilityNodeInfo): Boolean {
-        node.collectionInfo?.let { ci ->
-            if (ci.rowCount > 1 && ci.columnCount <= 1) return true
-            if (ci.columnCount > 1 && ci.rowCount <= 1) return false
-        }
+    /** Stories and carousels: only left/right movement, or one row of many columns. */
+    private fun isHorizontalOnly(node: AccessibilityNodeInfo): Boolean {
+        node.collectionInfo?.let { ci -> if (ci.columnCount > 1 && ci.rowCount <= 1) return true }
         val ids = node.actionList.map { it.id }.toSet()
-        val vertical = mutableSetOf(AccessibilityAction.ACTION_SCROLL_UP.id, AccessibilityAction.ACTION_SCROLL_DOWN.id)
-        val horizontal = mutableSetOf(AccessibilityAction.ACTION_SCROLL_LEFT.id, AccessibilityAction.ACTION_SCROLL_RIGHT.id)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            vertical += setOf(AccessibilityAction.ACTION_PAGE_UP.id, AccessibilityAction.ACTION_PAGE_DOWN.id)
-            horizontal += setOf(AccessibilityAction.ACTION_PAGE_LEFT.id, AccessibilityAction.ACTION_PAGE_RIGHT.id)
+        val horizontal = horizontalActions().any { it in ids }
+        val vertical = verticalActions().any { it in ids }
+        return horizontal && !vertical
+    }
+
+    private fun hasFullPageChild(node: AccessibilityNodeInfo): Boolean = maxChildFillPct(listNode(node)) >= 95
+
+    private fun maxChildFillPct(list: AccessibilityNodeInfo): Int {
+        val lb = Rect().also { list.getBoundsInScreen(it) }
+        if (lb.height() <= 0) return 0
+        var best = 0
+        val r = Rect()
+        for (i in 0 until list.childCount) {
+            val c = list.getChild(i) ?: continue
+            c.getBoundsInScreen(r)
+            if (!r.intersect(lb)) continue
+            best = maxOf(best, r.height() * 100 / lb.height())
         }
-        if (ids.any { it in vertical }) return true
-        return false // horizontal or unknown: Stories-style pagers must not count
+        return best
     }
 
     /** ViewPager2 wraps a RecyclerView of the same size: descend through such wrappers. */
@@ -113,7 +189,6 @@ class SurfaceDetector {
             val nb = Rect().also { node.getBoundsInScreen(it) }
             val cb = Rect().also { child.getBoundsInScreen(it) }
             if (cb.height() < nb.height() * 0.95f) return node
-            // Only descend into another list container, never into a single video item.
             val cls = child.className?.toString().orEmpty()
             val isList = child.isScrollable || child.collectionInfo != null ||
                 cls.contains("RecyclerView") || cls.contains("ViewPager")
@@ -123,49 +198,20 @@ class SurfaceDetector {
         return node
     }
 
-    /** The child that fills most of the list, if it fills at least 60% of it. */
-    private fun currentItem(list: AccessibilityNodeInfo, listBounds: Rect): AccessibilityNodeInfo? {
-        var best: AccessibilityNodeInfo? = null
-        var bestHeight = 0
-        val r = Rect()
-        for (i in 0 until list.childCount) {
-            val child = list.getChild(i) ?: continue
-            child.getBoundsInScreen(r)
-            if (!r.intersect(listBounds)) continue
-            if (r.height() > bestHeight) {
-                bestHeight = r.height(); best = child
-            }
-        }
-        return if (bestHeight >= listBounds.height() * 0.6f) best else null
+    private fun verticalActions(): Set<Int> {
+        val s = mutableSetOf(AccessibilityAction.ACTION_SCROLL_UP.id, AccessibilityAction.ACTION_SCROLL_DOWN.id)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) s += setOf(AccessibilityAction.ACTION_PAGE_UP.id, AccessibilityAction.ACTION_PAGE_DOWN.id)
+        return s
     }
 
-    /**
-     * The three longest description/text strings in the item that look stable:
-     * at least 12 characters and no digits (like counts, timers and view counts
-     * change while you watch). Short labels ("Like", "Follow") are skipped
-     * because they toggle. Used only to build a hash; never stored.
-     */
-    private fun collectStableText(item: AccessibilityNodeInfo): List<String> {
-        val found = mutableListOf<String>()
-        val queue = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>()
-        queue.addLast(item to 0)
-        var visited = 0
-        while (queue.isNotEmpty() && visited < MAX_ITEM_NODES) {
-            val (node, depth) = queue.removeFirst()
-            visited++
-            val s = (node.contentDescription ?: node.text)?.toString()?.trim()
-            if (s != null && s.length >= 12 && s.none { it.isDigit() }) found += s
-            if (depth < MAX_ITEM_DEPTH) {
-                for (i in 0 until node.childCount) node.getChild(i)?.let { queue.addLast(it to depth + 1) }
-            }
-        }
-        return found.distinct().sortedWith(compareByDescending<String> { it.length }.thenBy { it }).take(3)
+    private fun horizontalActions(): Set<Int> {
+        val s = mutableSetOf(AccessibilityAction.ACTION_SCROLL_LEFT.id, AccessibilityAction.ACTION_SCROLL_RIGHT.id)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) s += setOf(AccessibilityAction.ACTION_PAGE_LEFT.id, AccessibilityAction.ACTION_PAGE_RIGHT.id)
+        return s
     }
 
     private companion object {
-        const val MAX_NODES = 600
-        const val MAX_DEPTH = 30
-        const val MAX_ITEM_NODES = 150
-        const val MAX_ITEM_DEPTH = 10
+        const val MAX_NODES = 800
+        const val MAX_DEPTH = 35
     }
 }

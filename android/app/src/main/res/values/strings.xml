@@ -12,7 +12,7 @@
     <string name="disclosure_reads_title">What the app reads</string>
     <string name="disclosure_read_1">Which app is on screen, but only to react to Instagram, TikTok and YouTube.</string>
     <string name="disclosure_read_2">The layout of the short-video screen, to notice when you move to the next video.</string>
-    <string name="disclosure_read_3">The description of the video on screen, turned straight into a one-way code so the same video is not counted twice. The text itself is never saved.</string>
+    <string name="disclosure_read_3">The position of the video on screen (first, second, third...), so the same video is not counted twice. No text on the screen is read: no captions, names or messages.</string>
     <string name="disclosure_read_4">Scroll events in those apps.</string>
     <string name="disclosure_never_title">What it never does</string>
     <string name="disclosure_never_1">Save or send video content, captions, usernames or messages.</string>
@@ -74,8 +74,6 @@
 
     <!-- Design screen -->
     <string name="design_title">Design system</string>
-    <string name="design_seed">Insert demo data</string>
-    <string name="design_seeded">Demo data added</string>
     <string name="back">Back</string>
 
     <!-- Full feature set (added after the slice). -->
@@ -296,4 +294,19 @@
     <string name="settings_licenses">Open-source licences</string>
     <string name="licenses_intro">Tidemark uses the Inter typeface by The Inter Project Authors, under the SIL Open Font License 1.1:</string>
     <string name="about_tagline">See how far you scrolled. Then let it ebb.</string>
+    <string name="design_samples_note">Sample values for checking the layout only. They are not your data and are never saved.</string>
+
+    <!-- Live diagnostics -->
+    <string name="diag_live">Live status</string>
+    <string name="diag_connected">Accessibility service connected</string>
+    <string name="diag_yes_since">yes, since %1$s</string>
+    <string name="diag_no">no</string>
+    <string name="diag_foreground">Current foreground app</string>
+    <string name="diag_last_event">Last accessibility event</string>
+    <string name="diag_surface">Detected short-video screen</string>
+    <string name="diag_last_reason">Last counting decision</string>
+    <string name="diag_counted_since">Videos counted since the service connected</string>
+    <string name="diag_total_real">Total videos counted (database)</string>
+    <string name="diag_none">none yet</string>
+    <string name="diag_live_note">Open Reels, Shorts or TikTok, scroll a few videos, then come back here. Only technical details are shown: app names, event types and screen structure, never what is on screen.</string>
 </resources>

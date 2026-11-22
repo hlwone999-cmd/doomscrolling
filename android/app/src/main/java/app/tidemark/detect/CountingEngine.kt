@@ -116,7 +116,10 @@ class CountingEngine(
             return
         }
         val kind = o.keyKind
-        if (kind != null && key.firstOrNull() != kind) return // rule 6
+        if (kind != null && key.firstOrNull() != kind) { // rule 6
+            sink.note("ignored $key: this session uses ${kind}: keys")
+            return
+        }
         if (key == pendingKey) return
         pendingKey = key
         pendingSince = now
@@ -185,12 +188,19 @@ class CountingEngine(
     }
 
     private fun commit(o: Open, key: String, now: Long) {
-        if (!o.mayCount) return
+        if (!o.mayCount) {
+            sink.note("not counted $key: no swipe since the last count")
+            return
+        }
         // A settled video uses up the scroll, even one already counted (swipe back),
         // so a later key change on that same video cannot count it again.
         o.mayCount = false
-        if (!o.counted.add(key)) return
+        if (!o.counted.add(key)) {
+            sink.note("not counted $key: already counted in this session")
+            return
+        }
         if (o.keyKind == null) o.keyKind = key.first()
+        sink.note("counted $key after ${now - pendingSince} ms on screen")
         sink.countVideo(o.token, key, now, now - pendingSince)
     }
 
@@ -240,4 +250,7 @@ interface EngineSink {
     fun touchSession(token: Long, at: Long, activeMs: Long)
     fun closeSession(token: Long, endedAt: Long, activeMs: Long, reason: EndReason)
     fun overlayVisible(visible: Boolean)
+
+    /** Why the last observation did or didn't count. Diagnostics only; no content. */
+    fun note(reason: String) {}
 }

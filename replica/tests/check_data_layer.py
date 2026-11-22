@@ -298,6 +298,59 @@ def main():
     check("range returns both days in order", [r[0] for r in rows] == ["2026-11-01", "2026-11-21"], rows)
     check("recent excludes the open session", db.execute(Q["recent"], {"limit": 10}).fetchall() == [])
 
+    print("DB-18 purge sample rows from an older build, rebuild totals from real data")
+    db = fresh()
+    # Real activity: 2 videos, 60 s, closed.
+    real = open_session(db, at=1000)
+    count(db, real, "p:0", 1001); count(db, real, "p:1", 1002)
+    db.execute(Q["close"], {"id": real, "endedAt": 61_000, "reason": "left_surface", "activeMs": 60_000, "now": 61_000})
+    # Sample rows exactly as the old DemoData wrote them (rules_version 0, is_open NULL, i:demo- keys).
+    cur = db.execute(
+        "INSERT INTO session (package, surface_kind, day_key, tz_offset_min, started_at, last_event_at, ended_at,"
+        " reel_count, active_ms, ended_reason, rules_version, target_version_code, is_open, created_at, updated_at)"
+        " VALUES ('com.instagram.android', 'reels', '2026-11-21', 420, 100, 100, NULL, 0, 0, NULL, 0, NULL, NULL, 100, 100)")
+    demo = cur.lastrowid
+    for i in range(42):
+        count(db, demo, "i:demo-%d-%d" % (demo, i), 100 + i)
+    db.execute(Q["finishDemo"], {"id": demo, "endedAt": 900, "activeMs": 800})
+    check("before purge the dashboard shows real + sample (44)", stat(db)[0] == 44, stat(db))
+
+    ids = [r[0] for r in db.execute(Q["DemoPurgeDao.demoSessionIds"])]
+    check("only the sample session is selected", ids == [demo], ids)
+    marks = ",".join("?" * len(ids))
+    days = db.execute(Q["DemoPurgeDao.daysOf"].replace("(:ids)", "(%s)" % marks), ids).fetchall()
+    db.execute(Q["DemoPurgeDao.deleteSessions"].replace("(:ids)", "(%s)" % marks), ids)
+    for d, p in days:
+        db.execute(Q["DemoPurgeDao.rebuildDay"], {"day": d, "pkg": p, "now": 99})
+    db.execute(Q["DemoPurgeDao.dropEmptyDays"])
+    check("after purge: only real videos (2)", stat(db)[0] == 2, stat(db))
+    check("after purge: only real time (60 s)", stat(db)[1] == 60_000, stat(db))
+    check("after purge: only real sessions (1)", stat(db)[2] == 1, stat(db))
+    check("no sample events left", db.execute("SELECT COUNT(*) FROM reel_event WHERE item_key LIKE 'i:demo-%'").fetchone()[0] == 0)
+    check("real events kept", db.execute(Q["countAll"]).fetchone()[0] == 2)
+    again = [r[0] for r in db.execute(Q["DemoPurgeDao.demoSessionIds"])]
+    check("purge is a no-op the second time", again == [], again)
+
+    print("DB-19 a database with only sample data ends empty (0 videos, 0 minutes)")
+    db = fresh()
+    cur = db.execute(
+        "INSERT INTO session (package, surface_kind, day_key, tz_offset_min, started_at, last_event_at, ended_at,"
+        " reel_count, active_ms, ended_reason, rules_version, target_version_code, is_open, created_at, updated_at)"
+        " VALUES ('com.google.android.youtube', 'shorts', '2026-11-21', 420, 100, 100, NULL, 0, 0, NULL, 0, NULL, NULL, 100, 100)")
+    demo = cur.lastrowid
+    for i in range(17):
+        count(db, demo, "i:demo-%d-%d" % (demo, i), 100 + i)
+    db.execute(Q["finishDemo"], {"id": demo, "endedAt": 900, "activeMs": 800})
+    ids = [r[0] for r in db.execute(Q["DemoPurgeDao.demoSessionIds"])]
+    marks = ",".join("?" * len(ids))
+    days = db.execute(Q["DemoPurgeDao.daysOf"].replace("(:ids)", "(%s)" % marks), ids).fetchall()
+    db.execute(Q["DemoPurgeDao.deleteSessions"].replace("(:ids)", "(%s)" % marks), ids)
+    for d, p in days:
+        db.execute(Q["DemoPurgeDao.rebuildDay"], {"day": d, "pkg": p, "now": 99})
+    db.execute(Q["DemoPurgeDao.dropEmptyDays"])
+    check("totalFor today = 0", db.execute(Q["totalFor"], {"dayKey": "2026-11-21"}).fetchone()[0] == 0)
+    check("no daily rows left", db.execute("SELECT COUNT(*) FROM daily_stat").fetchone()[0] == 0)
+
     print()
     print("%d failing" % len(FAILS))
     return 1 if FAILS else 0
