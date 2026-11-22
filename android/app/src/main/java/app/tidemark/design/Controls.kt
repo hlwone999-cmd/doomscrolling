@@ -37,6 +37,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
@@ -234,7 +235,7 @@ fun ScreenHeader(title: String, onBack: (() -> Unit)?) {
         if (onBack != null) {
             IconButton(onClick = onBack) { Icon(AppIcons.Back, contentDescription = stringResource(R.string.back), tint = c.text) }
         }
-        Text(title, style = AppType.headline, color = c.text, modifier = Modifier.semantics { androidx.compose.ui.semantics.heading() })
+        Text(title, style = AppType.headline, color = c.text, modifier = Modifier.semantics { heading() })
     }
 }
 
