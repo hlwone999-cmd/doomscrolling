@@ -8,13 +8,34 @@ id; each one names the files changed.
 
 | severity | open | fixed |
 | --- | --- | --- |
-| S1 | 0 | 1 (BUG-002, fixed in code; device check pending) |
+| S1 | 0 | 2 (BUG-002, BUG-003: fixed in code; device check pending) |
 | S2 | 0 | 0 |
 | S3 | 0 | 0 |
 | S4 | 0 | 1 |
 
 Round 2 (full feature set): no new bug reproduced. Two "to check" items
 were resolved in code (C-6, C-7); four new ones need a phone (C-10 to C-13).
+
+### BUG-003: Only the first video counted on TikTok (counter stuck at 1)
+
+- Severity: S1 (core flow)
+- Flow / case: F02-H3, F02-E1..E5
+- Device: Realme, TikTok (user report, 2026-11-21). The overlay appeared and showed 1; after several swipes it stayed at 1.
+
+Diagnosis (source)
+- The page key came from the pager's direct child only. With a constant wrapper it never changed, so every swipe gave the same `p:0` key.
+- ViewPager keeps its children in creation order, not page order, so `PositionTracker` could step back onto an already-counted position.
+- `TYPE_VIEW_SCROLLED` carries the adapter position (`fromIndex`/`toIndex`, set by ViewPager and RecyclerView), but it was ignored.
+- Probes on content changes ran only every 600 ms, so the mid-swipe moment was usually missed.
+
+Fix (00383ec): `PageTracker` + `FeedPipeline`
+- A new video needs swipe evidence and a different page (adapter index, or a two-level page signature). No text is read.
+- Scrolls from small views (comments, captions) are not swipes.
+- On-screen probes run every 250 ms.
+- The counter now defaults to top centre, below the status bar plus 64 dp.
+- Tests: `FeedPipelineTest` and `PageTrackerTest` (JVM, passed in CI run 44970583305), and the same scenarios in `engine_sim.py`.
+
+Status: **fixed in code and built. Not yet verified on the phone.**
 
 ### BUG-002: Dashboard showed sample data (88 = 42 + 29 + 17) and nothing counted on a Realme phone
 

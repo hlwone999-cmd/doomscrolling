@@ -132,3 +132,11 @@ Trigger: device report (Realme): the dashboard showed 88 sample videos and nothi
 3. Share the Diagnostics log.
 
 The log contains only structure (class names, view-id entries, sizes, scroll directions). It is what tunes detection for that phone.
+
+## Round 6: every swipe counts; counter at top centre (2026-11-21)
+
+| run | commit | result |
+| --- | --- | --- |
+| 44970583305 | 00383ec | **success**: Python checks (engine port now 44 checks including the feed scenarios), compile, JVM unit tests (FeedPipelineTest, PageTrackerTest added), debug APK 11.4 MB, no INTERNET permission |
+
+See BUG-003. Device verification on TikTok, Reels and Shorts is still pending.
